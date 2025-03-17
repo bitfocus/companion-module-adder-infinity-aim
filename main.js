@@ -12,6 +12,8 @@ class ModuleInstance extends InstanceBase {
 
 	async init(config) {
 		this.config = config
+
+		//Setup config dicts if they don't exist
 		if(!this.config.receiverChoices){
 			this.config.receiverChoices = [{id: "None", label: "None"}]
 		}
@@ -21,14 +23,10 @@ class ModuleInstance extends InstanceBase {
 		if(!this.config.presets){
 			this.config.presets = [{id: "None", label: "None"}]
 		}
-		this.log("info", JSON.stringify(this.config.channelStatus))
 		if(!this.config.channelStatus){
 			this.config.channelStatus = {}
 		}
-
-		this.saveConfig()
-		this.log("info", "Starting module")
-		this.log("info", `Config on startup: ${JSON.stringify(config)}`);
+		this.log("info", "Starting AIM module")
 		this.log("info", `This is the token on startup ${this.config.token}`)
 		this.updateStatus('connecting', 'Waiting for auth');
 		
@@ -38,9 +36,8 @@ class ModuleInstance extends InstanceBase {
 		this.updateActions() // export actions
 		this.updateFeedbacks() // export feedbacks
 		this.updateVariableDefinitions() // export variable definitions
-		this.startPolling()
+		if(this.config.poll){this.startPolling()}
 
-		//this.config.pollInterval = 5000;
 		
 	}
 	// When module gets deleted
@@ -49,18 +46,45 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async configUpdated(config) {
-		this.config = config
-		this.startPolling()
 
+		//reset token if username is changed
+		if(config.username != this.config.username){
+			this.config = config
+			this.config.token = null;
+			this.saveConfig(this.config);
+		}
+		this.config = config
+		//start/stop polling
+		if(!this.config.poll){
+			this.stopPolling();
+		}else{
+			this.startPolling();
+		}
 	}
 
-	async authenticate(){
+	async authenticate() {
+
+		//If the IP and Username are set, try authentication
 		if (this.config.ip && this.config.username) {
-			this.log("info","Waiting for auth")
-            this.config.token = await getAuthToken(this); // Get the token
-			this.saveConfig(this.config)
-			this.log("info", this.config.token)
-        }
+			this.log("info", "Attempting authentication");
+	
+			try {
+
+				//Await Token
+				this.config.token = await getAuthToken(this);
+				
+				//Check if token was received.
+				if (this.config.token) {
+					this.updateStatus(InstanceStatus.Ok);
+					this.saveConfig(this.config);
+				} else {
+					this.updateStatus(InstanceStatus.AuthenticationFailure);
+					this.log("error", "Could not log in. Please check your configuration.");
+				}
+			} catch (error) {
+				this.log("error", `Authentication process failed: ${error.message}`);
+			}
+		}
 	}
 
 	// Return config fields for web config
@@ -96,22 +120,32 @@ class ModuleInstance extends InstanceBase {
 				label: "Channel Poll Interval",
 				width: 4,
 				default: 0
+			},
+			{
+				type: 'checkbox',
+				id: 'poll',
+				tooltip: "Enable channel polling. Allows for keeping channel feedback updated.",
+				width: 1,
+				default: false
 			}
 		]
 	}
 
 	async startPolling() {
+		
+		//Don't start polling if already polling
 		if (this.pollData) {
 			// If already running, check if interval needs updating
+			this.log("info", "already polling")
 			if (this.config.pollInterval !== this.currentPollInterval) {
-				this.log("info", "clearing poll")
 				clearInterval(this.pollData);
 			} else {
-				return; // Do nothing if interval is the same
+				return;
 			}
 		}
 
-		if (this.config.pollInterval) {
+		//Only poll if inteval is above 0 and checkbox
+		if (this.config.pollInterval && this.config.poll) {
 			this.currentPollInterval = this.config.pollInterval; // Store the current interval
 			this.pollData = setInterval(() => {
 				checkConnectionStatus(this);

@@ -3,6 +3,7 @@ const { XMLParser } = require('fast-xml-parser');
 
 async function getAuthToken(instance) {
     let url = `http://${instance.config.ip}/api/?v=1&method=login&username=${encodeURIComponent(instance.config.username)}&password=${encodeURIComponent(instance.config.password)}`;
+    instance.log("info", "IN AUTHENTICATION NOW!")
     try {
         instance.log("info", `attempting: ${url}`)
         let response = await fetch(url, {

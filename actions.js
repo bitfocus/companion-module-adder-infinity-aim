@@ -1,4 +1,4 @@
-const { refreshAvailableChannels, connectChannel, getPresets, connectPreset } = require('./api');
+const { refreshAvailableChannels, connectChannel, getPresets, connectPreset, disconnect } = require('./api');
 module.exports = function (self) {
 	self.setActionDefinitions({
 		Connect_Channel: {
@@ -25,38 +25,63 @@ module.exports = function (self) {
 					choices: [{id: "v", label: "View Only"}, {id: "s", label: "Shared"}, {id: "e", label: "Exclusive"}, {id: "p", label: "Private"}],
 					default: "s"
 				},
-				{
-					id: 'learnlabel',
-					type: "static-text",
-					label: "test"
-				}
 			],
 			learn: async (action) => {
 				await refreshAvailableChannels(self, 3);
 			},
 			callback: async (action) => {
-				let success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode)
-				    // Ensure state storage exists
-					self.log("info", JSON.stringify(action))
-					//self.config.channelStatus = self.config.channelStatus || {};
 
-					// Generate a unique key for each button using receiver & channel
-					let key = action.controlId;
-					const selectedReceiver = self.config.receiverChoices.find(r => r.id === action.options.receiver);
-					const label = selectedReceiver ? selectedReceiver.label : "Unknown";
-					self.config.channelStatus[key] = {connection: success ? "connected" : "error" , receiver: action.options.receiver, channel: action.options.channel, d_name: label};
-					self.saveConfig(self.config)
-					self.log("info", `channel status = ${JSON.stringify(self.config.channelStatus[key])}`)
-					// self.setVariableValues({'channelStatusKey': key})
-					// // Automatically refresh feedbacks for all buttons
-					self.checkFeedbacks('channel_status', 'channel_status_custom');
+				//Try connecting the channel
+				let success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode)
+				
+				//Set key to button id
+				let key = action.controlId;
+				let subkey = `${action.options.receiver}_${action.options.channel}`
+
+				//Get the Receiver Name
+				const selectedReceiver = self.config.receiverChoices.find(r => r.id === action.options.receiver);
+				const label = selectedReceiver ? selectedReceiver.label : "Unknown";
+
+				//Set channel status and save config
+				if (!self.config.channelStatus[key])
+				{
+					self.config.channelStatus[key] = {}
+				}
+				
+				if (!self.config.channelStatus[key][subkey])
+				{
+					self.config.channelStatus[key][subkey]={connection: success ? "connected" : "error" , receiver: action.options.receiver, channel: action.options.channel, d_name: label,feedback: false};
+				}else{
+					self.config.channelStatus[key][subkey]["connection"] = success ? "connected" : "error" 
+				}
+				self.saveConfig(self.config)
+
+				//Update feedbacks
+				self.checkFeedbacks('channel_status', 'channel_status_custom');
 
 				},
-				unsubscribe: (action) => {
-					self.log("info", `Unsubscribe ${action.controlId} from channelStatus ${JSON.stringify(self.config.channelStatus[action.controlId])}`)
-					delete self.config.channelStatus[action.controlId]
+				subscribe: async (action) => {
+
+					//Create dict element when subscribing *Need to allow for multiple actions per button here.
+					const selectedReceiver = self.config.receiverChoices.find(r => r.id === action.options.receiver);
+					const label = selectedReceiver ? selectedReceiver.label : "Unknown";
+					let key = action.controlId;
+					if (!self.config.channelStatus[key])
+						{
+							self.config.channelStatus[key] = {}
+						}
+					let subkey = `${action.options.receiver}_${action.options.channel}`
+					self.config.channelStatus[action.controlId][subkey] = {connection: "disconnected", receiver: action.options.receiver, channel: action.options.channel, d_name: label, feedback: false};
+				},
+				unsubscribe: async (action) => {
+
+					//Remove Dict Element after unsubscribing
+					let subkey = `${action.options.receiver}_${action.options.channel}`
+					delete self.config.channelStatus[action.controlId][subkey]
+					if (self.config.channelStatus[action.controlId].length === 0){
+						delete self.config.channelStatus[action.controlId]
+					}
 					self.saveConfig(self.config)
-					self.log("info", `config after delete ${JSON.stringify(self.config.channelStatus)}`)
 				}
 		},
 		refresh_choices: {
@@ -82,12 +107,63 @@ module.exports = function (self) {
 					label: 'Connection Mode',
 					choices: [{id: "v", label: "View Only"}, {id: "s", label: "Shared"}, {id: "e", label: "Exclusive"}, {id: "p", label: "Private"}],
 					default: "s"
+				}
+			],
+			learn: async (action) => {
+				await getPresets(self, 3);
+			},
+			callback: async (action) => {
+				let success = await connectPreset(self, action.options.preset, action.options.mode)
+				let key = action.controlId
+				if(!self.config.channelStatus[key])
+				{
+					self.config.channelStatus[key]
+				}
+
+				if(!self.config.channelStatus[key][action.options.preset])
+				{
+					self.config.channelStatus[key][action.options.preset]= {connection: success ? "connected" : "error", preset: action.options.preset, feedback: false};
+				}else{
+					self.config.channelStatus[key][action.options.preset]["connection"] = success ? "connected" : "error" 
+				}
+				self.checkFeedbacks('channel_status', 'channel_status_custom');
+			},
+			subscribe: async (action) => {
+
+				//Create dict element when subscribing *Need to allow for multiple actions per button here.
+				let key = action.controlId;
+				if (!self.config.channelStatus[key])
+					{
+						self.config.channelStatus[key] = {}
+					}
+				let subkey = `${action.options.preset}`
+				self.config.channelStatus[action.controlId][subkey] = {connection: "disconnected", preset: action.options.preset, feedback: false};
+			},
+			unsubscribe: async (action) => {
+
+				//Remove Dict Element after unsubscribing
+				let subkey = `${action.options.preset}`
+				delete self.config.channelStatus[action.controlId][subkey]
+				if (self.config.channelStatus[action.controlId].length === 0){
+					delete self.config.channelStatus[action.controlId]
+				}
+				self.saveConfig(self.config)
+			}
+		},
+		disconnect_preset: {
+			name: "Disconnect Preset",
+			options: [
+				{
+					id: 'preset',
+					type:'dropdown',
+					label: 'Preset',
+					choices: self.config.presets,
+					default: self.config.presets[0].id
 				},
 				{
 					id: 'force',
 					type: 'checkbox',
-					label: 'Force',
-					tooltip: "Whether to ignore errors with some of the preset's pairs or not.",
+					label: 'Force Disconnect',
 					default: false
 				}
 			],
@@ -95,8 +171,32 @@ module.exports = function (self) {
 				await getPresets(self, 3);
 			},
 			callback: async (action) => {
-				await connectPreset(self, action.options.preset, action.options.mode, action.options.force ? 1 : 0)
+				let success = await disconnect(self, "preset", action.options.preset, action.options.force)
 			}
-		}
+		},
+		disconnect_channel: {
+			name: "Disconnect Channel",
+			options: [
+				{
+					id: 'receiver',
+					type: 'dropdown',
+					label: 'Receiver',
+					choices: self.config.receiverChoices,
+					default: self.config.receiverChoices[0].id
+				},
+				{
+					id: 'force',
+					type: 'checkbox',
+					label: 'Force Disconnect',
+					default: false
+				}
+			],
+			learn: async (action) => {
+				await getPresets(self, 3);
+			},
+			callback: async (action) => {
+				let success = await disconnect(self, "channel", action.options.receiver, action.options.force)
+			}
+		},
 	})
 }
