@@ -124,8 +124,9 @@ class ModuleInstance extends InstanceBase {
 			{
 				type: 'checkbox',
 				id: 'poll',
+				label: 'Poll',
 				tooltip: "Enable channel polling. Allows for keeping channel feedback updated.",
-				width: 1,
+				width: 2,
 				default: false
 			}
 		]

@@ -3,7 +3,7 @@ const { combineRgb } = require('@companion-module/base')
 module.exports = async function (self) {
 	self.setFeedbackDefinitions({
 			channel_status: {
-				name: 'Channel Connection Status Auto',
+				name: 'Channel Connection Status',
 				type: 'advanced',
 				options: [
 					{
@@ -112,36 +112,28 @@ module.exports = async function (self) {
 				}
 			},
 		channel_status_custom: {
-			name: 'Channel Connection Status Customizable',
+			name: 'Channel Connection Status Boolean',
 			type: 'boolean',
-			options: [
-				{
-					id: 'test',
-					type: 'textinput',
-					label: "test"
-				}
-			],
 			callback: (feedback) => {
 
-				//let key = `${feedback.options.receiver}-${feedback.options.channel}`;
-				let connectionStatus = {}
-				if (self.config.channelStatus && self.config.channelStatus[feedback.controlId])
-				{
-					connectionStatus = self.config.channelStatus[feedback.controlId]
-				}
-				else{
-					return false
+				let connectionStatus = self.config.channelStatus?.[feedback.controlId] || {};
+
+				let allError = Object.values(connectionStatus).every(conn => conn.connection === "error");
+				let allConnected = Object.values(connectionStatus).every(conn => conn.connection === "connected");
+				let allDisconnected = Object.values(connectionStatus).every(conn => conn.connection === "disconnected");
+				if (Object.keys(connectionStatus).length === 0) {
+					return {};
 				}
 
 	
 				// Check if we have a stored success/failure state
-				if (connectionStatus.connection === true) {
+				if (allConnected === true) {
 					return true
-				} else if (connectionStatus.connection === false) {
+				} else if (allError) {
 					return false
 				}
 	
-				return {}; // Default button color
+				return {}; 
 			}
 		}
 	});

@@ -157,10 +157,6 @@ async function checkConnectionStatus(self, retry=0)
     
     if (hasPreset){
         presets = await getPresets(self, 2, true);
-        self.log("info", JSON.stringify.presets);
-    }
-    else {
-        self.log("info", "no presets")
     }
     for (const [key, connections] of Object.entries(self.config.channelStatus)){
 
@@ -174,11 +170,9 @@ async function checkConnectionStatus(self, retry=0)
 
             if(value["preset"]){
                 Object.values(presets).forEach(entry => {
-                    self.log("info", `${cp_id}:, entry.cp_id`);
                 });
-                const presetInfo = Object.values(presets).find(entry => sub => sub.cp_id === value.preset)
+                const presetInfo = Object.values(presets).find(entry => entry.cp_id === value.preset)
                 if(presetInfo){
-                    self.log("info", `Found Preset info`);
                     if(presetInfo.cp_active==="none")
                     {
                         if (self.config.channelStatus[key][subkey]["connection"] === "error"){
@@ -190,7 +184,6 @@ async function checkConnectionStatus(self, retry=0)
                     }else if(presetInfo.cp_active==="partial"){
                         self.config.channelStatus[key][subkey]["connection"] = "partial";
                     }
-
                     
                 }
                 continue;
@@ -309,7 +302,7 @@ async function getPresets(self, retry=0, rtnData = false)
             self.saveConfig(self.config);
             self.updateActions();
             if (rtnData){
-                return data.api_response.connection_presets;
+                return data.api_response.connection_presets.connection_preset;
             }
         }else{
             self.log("info", "There were no presets defined on the AIM server.")

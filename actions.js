@@ -175,7 +175,7 @@ module.exports = function (self) {
 			}
 		},
 		disconnect_channel: {
-			name: "Disconnect Channel",
+			name: "Disconnect Receiver",
 			options: [
 				{
 					id: 'receiver',
@@ -184,18 +184,13 @@ module.exports = function (self) {
 					choices: self.config.receiverChoices,
 					default: self.config.receiverChoices[0].id
 				},
-				{
-					id: 'force',
-					type: 'checkbox',
-					label: 'Force Disconnect',
-					default: false
-				}
+
 			],
 			learn: async (action) => {
 				await getPresets(self, 3);
 			},
 			callback: async (action) => {
-				let success = await disconnect(self, "channel", action.options.receiver, action.options.force)
+				let success = await disconnect(self, "channel", action.options.receiver, false)
 			}
 		},
 	})
