@@ -26,13 +26,11 @@ class ModuleInstance extends InstanceBase {
 		if(!this.config.channelStatus){
 			this.config.channelStatus = {}
 		}
-		this.log("info", "Starting AIM module")
-		this.log("info", `This is the token on startup ${this.config.token}`)
+		this.log("debug", "Starting AIM module")
 		this.updateStatus('connecting', 'Waiting for auth');
 		
 		this.handleHttpRequest
 		this.updateStatus(InstanceStatus.Ok)
-		this.log("info", `ip: ${this.config.ip} user: ${this.config.username}`)
 		this.updateActions() // export actions
 		this.updateFeedbacks() // export feedbacks
 		this.updateVariableDefinitions() // export variable definitions
@@ -66,7 +64,7 @@ class ModuleInstance extends InstanceBase {
 
 		//If the IP and Username are set, try authentication
 		if (this.config.ip && this.config.username) {
-			this.log("info", "Attempting authentication");
+			this.log("info", "Authenticating with the AIM server.");
 	
 			try {
 
@@ -137,7 +135,6 @@ class ModuleInstance extends InstanceBase {
 		//Don't start polling if already polling
 		if (this.pollData) {
 			// If already running, check if interval needs updating
-			this.log("info", "already polling")
 			if (this.config.pollInterval !== this.currentPollInterval) {
 				clearInterval(this.pollData);
 			} else {
