@@ -4,34 +4,35 @@ const { InstanceStatus } = require('@companion-module/base')
 
 async function refreshAvailableChannels(self, retry = 0){
     try{
-        //API Url
+        self.log("info", `Refresh Clicked ${self.config.token}`)
         let url = `http://${self.config.ip}/api/?v=2&method=get_channels&token=${encodeURIComponent(self.config.token)}`;
+        self.log("info", `attempting: ${url}`)
                 let response = await fetch(url, {
-                    method: 'GET', 
-                    headers: { 'Content-Type': 'application/xml' }, 
+                    method: 'GET', // No need for POST since data is in the URL
+                    headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
                 });
         
                 let xmlText = await response.text();
                 const parser = new XMLParser();
                 let data = parser.parse(xmlText);
-
-                //Check if authenticated
                 if (data.api_response && !data.api_response.success)
                     {
                         if (retry>0){
+                            self.log("info", "calling authentication")
                             await self.authenticate()
                             await refreshAvailableChannels(self, retry-1)
                             return
                         }
                         else{
-                            self.log("error", "API Call Failed. Failed to authenticate.")
+                            self.log("error", "Could not authenticate")
                             return
                         }
                     }
 
 
-                //Check response and add to config
+                
                 if (data.api_response && data.api_response.channels) {
+                    self.log("info",'Channels Fetched successful.');
                     self.updateStatus(InstanceStatus.Ok);
                     let channels = Array.isArray(data.api_response.channels.channel)
                     ? data.api_response.channels.channel
@@ -59,8 +60,7 @@ async function refreshAvailableChannels(self, retry = 0){
 
 async function refreshAvailableReceivers(self, retry=0){
     try{
-
-        //API Url
+        self.log("info", "Refresh Receivers")
         let url = `http://${self.config.ip}/api/?v=2&method=get_devices&device_type=rx&token=${encodeURIComponent(self.config.token)}`;
                 let response = await fetch(url, {
                     method: 'GET',
@@ -71,7 +71,6 @@ async function refreshAvailableReceivers(self, retry=0){
                 const parser = new XMLParser();
                 let data = parser.parse(xmlText);
                 
-                //Check authentication
                 if (data.api_response && !data.api_response.success)
                 {
                     if (retry>0){
@@ -80,13 +79,16 @@ async function refreshAvailableReceivers(self, retry=0){
                         return
                     }
                     else{
-                        self.log("error", "Unable to Fetch Receivers. Authentication Error.")
+                        self.log("error", "Could not authenticate")
                         return
                     }
                 }
 
-                //Add any receivers to config
+
+                
+                
                 if (data.api_response.devices) {
+                    self.log("info",'Receivers Fetched successful.');
                     self.updateStatus(InstanceStatus.Ok);
                     let devices = Array.isArray(data.api_response.devices.device)
                     ? data.api_response.devices.device
@@ -101,7 +103,7 @@ async function refreshAvailableReceivers(self, retry=0){
                     self.saveConfig(self.config);
 
                 } else {
-                    self.log("Error", 'Unable to fetch any receivers. Please check your configuration.');
+                    self.log("Error", 'Unable to fetch receivers');
                     return null;
                 }
     }
@@ -125,7 +127,6 @@ async function connectChannel(self, rec, channel, mode, retry=2)
                 const parser = new XMLParser();
                 let data = parser.parse(xmlText);
 
-        //Try to connect. If authentication issue, authenticate and recall.
         if (data.api_response)
             if(!data.api_response.success)
         {   
@@ -147,11 +148,8 @@ async function connectChannel(self, rec, channel, mode, retry=2)
     }
 }
 
-//Polling function
 async function checkConnectionStatus(self, retry=0)
 {
-
-    //Get any preset connections
     const hasPreset = Object.values(self.config.channelStatus).some(connections => 
         Object.values(connections).some(value => value.preset !== undefined)
     );
@@ -160,24 +158,16 @@ async function checkConnectionStatus(self, retry=0)
     if (hasPreset){
         presets = await getPresets(self, 2, true);
     }
-
-    //Poll each connection
     for (const [key, connections] of Object.entries(self.config.channelStatus)){
 
-        //Skip empty keys
+
         if (Object.keys(connections).length === 0){continue;}
-
-
         for (const[subkey, value] of Object.entries(connections)){
             let data = null;
-
-            //Skip entries that don't have feedback applied
             if(!value["feedback"]){
                 continue;
             }
 
-
-            //Handle Preset connections
             if(value["preset"]){
                 Object.values(presets).forEach(entry => {
                 });
@@ -191,6 +181,7 @@ async function checkConnectionStatus(self, retry=0)
                         self.config.channelStatus[key][subkey]["connection"] = "disconnected";
                     }else if(presetInfo.cp_active==="full"){
                         self.config.channelStatus[key][subkey]["connection"] = "connected";
+                        self.log("info", `preset status ${self.config.channelStatus[key][subkey]["connection"]}`)
                     }else if(presetInfo.cp_active==="partial"){
                         self.config.channelStatus[key][subkey]["connection"] = "partial";
                     }
@@ -199,9 +190,8 @@ async function checkConnectionStatus(self, retry=0)
                 continue;
             }
             
-            //Start API call for each connection
             try{
-                let url = `http://${self.config.ip}/api/?v=2&method=get_devices&filter_d_name=${encodeURIComponent(value.d_name)}&token=${encodeURIComponent(self.config.token)}`
+                let url = `http://${self.config.ip}/api/?v=2&method=get_devices&&device_type=rx&filter_d_name=${encodeURIComponent(value.d_name)}&token=${encodeURIComponent(self.config.token)}`
                 let response = await fetch(url, {
                     method: 'GET', // No need for POST since data is in the URL
                     headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
@@ -223,7 +213,7 @@ async function checkConnectionStatus(self, retry=0)
                         continue;
                         }
                         else{
-                            self.log("error", "The specified device was not found.")
+                            self.log("error", "Could not find device")
                             continue
                         }
                     }
@@ -232,11 +222,10 @@ async function checkConnectionStatus(self, retry=0)
                         self.log("warn", "No receivers found, please check your configuration.");
                         continue;
                     }
-
-                    //Parse and set status
                     if (data.api_response.devices.device.con_c_id === value.channel)
                     {
                         self.updateStatus(InstanceStatus.Ok);
+
                         if (data.api_response.devices.device.con_end_time)
                         {
                             if(self.config.channelStatus[key][subkey]["connection"]==="error")
@@ -253,8 +242,12 @@ async function checkConnectionStatus(self, retry=0)
                             self.config.channelStatus[key][subkey]["connection"]="connected"
                         }
                     }
+else{
+				self.config.channelStatus[key][subkey]["connection"]="disconnected"
+		    }
                 }catch (error){
                     if (data != null ){
+                        self.log("error", `${error.message}   ${JSON.stringify(data)}`)
                         self.log('error', `Connection failed with code: ${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
                         continue;
                     }else{
@@ -295,7 +288,7 @@ async function getPresets(self, retry=0, rtnData = false)
             return;
             }
             else{
-                self.log("error", "Unable to fetch the presets from AIM. Please check your configuration.")
+                self.log("error", "Could not fetch presets")
                 return
             }
         }
