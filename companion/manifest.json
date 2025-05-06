@@ -1,9 +1,9 @@
 {
-	"id": "companion-module-adder-infinity-aim",
+	"id": "adder-infinity-aim",
 	"name": "Adder Infinity AIM",
 	"shortname": "AIM",
 	"description": "Adder Infinity AIM API module for Copmanion",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-adder-infinity-aim.git",
 	"bugs": "https://github.com/bitfocus/companion-module-adder-infinity-aim/issues",
