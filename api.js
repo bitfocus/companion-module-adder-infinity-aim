@@ -4,9 +4,7 @@ const { InstanceStatus } = require('@companion-module/base')
 
 async function refreshAvailableChannels(self, retry = 0){
     try{
-        self.log("info", `Refresh Clicked ${self.config.token}`)
         let url = `http://${self.config.ip}/api/?v=2&method=get_channels&token=${encodeURIComponent(self.config.token)}`;
-        self.log("info", `attempting: ${url}`)
                 let response = await fetch(url, {
                     method: 'GET', // No need for POST since data is in the URL
                     headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
@@ -33,7 +31,10 @@ async function refreshAvailableChannels(self, retry = 0){
                 
                 if (data.api_response && data.api_response.channels) {
                     self.log("info",'Channels Fetched successful.');
-                    self.updateStatus(InstanceStatus.Ok);
+                    if (this.currentStatus !== InstanceStatus.Ok){
+                        this.currentStatus = InstanceStatus.Ok;
+                        self.updateStatus(InstanceStatus.Ok);
+                    }
                     let channels = Array.isArray(data.api_response.channels.channel)
                     ? data.api_response.channels.channel
                     : [data.api_response.channels.channel];
@@ -43,8 +44,8 @@ async function refreshAvailableChannels(self, retry = 0){
                         channel_options.push({id: channel.c_id, label: channel.c_name})
                         
                     });
-                    self.config.channelChoices = channel_options
-                    self.saveConfig(self.config);
+                    self.parsedConfig.channelChoices = channel_options
+                    self.stringifyAndSave();
                     await refreshAvailableReceivers(self, retry)
                     self.updateActions();
 
@@ -83,13 +84,12 @@ async function refreshAvailableReceivers(self, retry=0){
                         return
                     }
                 }
-
-
-                
-                
                 if (data.api_response.devices) {
                     self.log("info",'Receivers Fetched successful.');
-                    self.updateStatus(InstanceStatus.Ok);
+                    if (this.currentStatus !== InstanceStatus.Ok){
+                        this.currentStatus = InstanceStatus.Ok;
+                        self.updateStatus(InstanceStatus.Ok);
+                    }
                     let devices = Array.isArray(data.api_response.devices.device)
                     ? data.api_response.devices.device
                     : [data.api_response.devices.device];
@@ -99,8 +99,8 @@ async function refreshAvailableReceivers(self, retry=0){
                         device_options.push({id: device.d_id, label: device.d_name})
                         
                     });
-                    self.config.receiverChoices = device_options
-                    self.saveConfig(self.config);
+                    self.parsedConfig.receiverChoices = device_options
+                    self.stringifyAndSave();
 
                 } else {
                     self.log("Error", 'Unable to fetch receivers');
@@ -113,8 +113,10 @@ async function refreshAvailableReceivers(self, retry=0){
 }
 
 
-async function connectChannel(self, rec, channel, mode, retry=2)
+async function connectChannel(self, rec, channel, mode, force = false, retry=2)
 {
+
+
     let url = `http://${self.config.ip}/api/?v=5&method=connect_channel&token=${encodeURIComponent(self.config.token)}&c_id=${encodeURIComponent(channel)}&rx_id=${encodeURIComponent(rec)}&mode=${encodeURIComponent(mode)}`
     try
     {
@@ -135,7 +137,14 @@ async function connectChannel(self, rec, channel, mode, retry=2)
                 await connectChannel(self, rec, channel, mode, retry-1)
                 return;
             }
-            self.log('error', `Connection failed with code :${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
+            self.log('error', `Connection failed with code: ${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
+        if (force){
+            let result = await disconnect(self, "channel", rec, 1);
+            if (!result){
+                return false;
+            }
+            return await connectChannel(self, rec, channel, mode, force, retry-1)
+        }
             return false;
         }
         else{
@@ -150,40 +159,49 @@ async function connectChannel(self, rec, channel, mode, retry=2)
 
 async function checkConnectionStatus(self, retry=0)
 {
-    const hasPreset = Object.values(self.config.channelStatus).some(connections => 
-        Object.values(connections).some(value => value.preset !== undefined)
+    const hasPreset = Object.values(self.parsedConfig.channelStatus).some(connections => 
+        Object.values(connections)
+            .filter(value => typeof value === 'object' && value !== null)
+            .some(value => value.preset !== undefined)
     );
+
     let presets = null;
-    
     if (hasPreset){
         presets = await getPresets(self, 2, true);
     }
-    for (const [key, connections] of Object.entries(self.config.channelStatus)){
+    
+    self.cleanupInactiveFeedback();
+    for (const [key, connections] of Object.entries(self.parsedConfig.channelStatus)){
 
-
-        if (Object.keys(connections).length === 0){continue;}
+        if (self.parsedConfig.channelStatus[key]["cleanup"]){
+            self.cleanupInactiveForKey(key);
+        }
+        if (Object.keys(connections).length === 0 || !self.parsedConfig.channelStatus[key]["feedback"]){
+            continue;}
         for (const[subkey, value] of Object.entries(connections)){
-            let data = null;
-            if(!value["feedback"]){
+            if (typeof self.parsedConfig.channelStatus[key][subkey] === "boolean"){
                 continue;
             }
+            let data = null;
 
             if(value["preset"]){
+                //console.log(self.parsedConfig.channelStatus[key])
                 Object.values(presets).forEach(entry => {
                 });
                 const presetInfo = Object.values(presets).find(entry => entry.cp_id === value.preset)
                 if(presetInfo){
                     if(presetInfo.cp_active==="none")
                     {
-                        if (self.config.channelStatus[key][subkey]["connection"] === "error"){
+                        if (self.parsedConfig.channelStatus[key][subkey]["connection"] === "error"){
                             continue;
                         }
-                        self.config.channelStatus[key][subkey]["connection"] = "disconnected";
+                        
+                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "disconnected";
                     }else if(presetInfo.cp_active==="full"){
-                        self.config.channelStatus[key][subkey]["connection"] = "connected";
-                        self.log("info", `preset status ${self.config.channelStatus[key][subkey]["connection"]}`)
+                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "connected";
+                        self.log("info", `preset status ${self.parsedConfig.channelStatus[key][subkey]["connection"]}`)
                     }else if(presetInfo.cp_active==="partial"){
-                        self.config.channelStatus[key][subkey]["connection"] = "partial";
+                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "partial";
                     }
                     
                 }
@@ -224,27 +242,35 @@ async function checkConnectionStatus(self, retry=0)
                     }
                     if (data.api_response.devices.device.con_c_id === value.channel)
                     {
-                        self.updateStatus(InstanceStatus.Ok);
+                        if (this.currentStatus !== InstanceStatus.Ok){
+                            this.currentStatus = InstanceStatus.Ok;
+                            self.updateStatus(InstanceStatus.Ok);
+                        }
 
                         if (data.api_response.devices.device.con_end_time)
                         {
-                            if(self.config.channelStatus[key][subkey]["connection"]==="error")
+                            if(self.parsedConfig.channelStatus[key][subkey]["connection"]==="error")
                             {
                                 continue;
                             }
                             else
                             {
-                                self.config.channelStatus[key][subkey]["connection"]="disconnected"
+                                self.parsedConfig.channelStatus[key][subkey]["connection"]="disconnected"
                             }
                             
                         }
                         else{
-                            self.config.channelStatus[key][subkey]["connection"]="connected"
+                            self.parsedConfig.channelStatus[key][subkey]["connection"]="connected"
                         }
                     }
-else{
-				self.config.channelStatus[key][subkey]["connection"]="disconnected"
-		    }
+                else{
+                    if(self.parsedConfig.channelStatus[key][subkey]["connection"]==="error")
+                        {
+                            continue;
+                        }
+                    self.parsedConfig.channelStatus[key][subkey]["connection"]="disconnected"
+
+                }
                 }catch (error){
                     if (data != null ){
                         self.log("error", `${error.message}   ${JSON.stringify(data)}`)
@@ -259,7 +285,8 @@ else{
                 }
             }
     }
-    self.checkFeedbacks('channel_status', 'channel_status_custom');
+    self.stringifyAndSave();
+    self.checkFeedbacks(...self.feedbackList);
 }
 
 
@@ -302,8 +329,8 @@ async function getPresets(self, retry=0, rtnData = false)
                 preset_options.push({id: p.cp_id, label: p.cp_name});
             })
 
-            self.config.presets = preset_options
-            self.saveConfig(self.config);
+            self.parsedConfig.presets = preset_options
+            self.stringifyAndSave();
             self.updateActions();
             if (rtnData){
                 return data.api_response.connection_presets.connection_preset;
@@ -386,6 +413,7 @@ async function disconnect(self, type, id, force = 0){
     catch (error)
     {
         self.log('error', `Error disconnecting: ${error.message}`);
+        return false;
     }
 }
 

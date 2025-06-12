@@ -2,8 +2,8 @@ const { combineRgb } = require('@companion-module/base')
 
 module.exports = async function (self) {
 	self.setFeedbackDefinitions({
-			channel_status: {
-				name: 'Channel Connection Status',
+			channel_status_pre_configured: {
+				name: 'Channel Connection Status Pre-Configured',
 				type: 'advanced',
 				options: [
 					{
@@ -51,18 +51,24 @@ module.exports = async function (self) {
 				],
 				callback: (feedback) => {
 
-		
-					let connectionStatus = self.config.channelStatus?.[feedback.controlId] || {};
+					let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
+					if (Object.keys(connectionStatus).length === 0){
+					return {};
+				}
+					let connections = Object.values(connectionStatus).filter(
+					conn => typeof conn === 'object' && conn !== null && 'connection' in conn
+					);
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
 
-					let allError = Object.values(connectionStatus).every(conn => conn.connection === "error");
-					let allConnected = Object.values(connectionStatus).every(conn => conn.connection === "connected");
-					let allDisconnected = Object.values(connectionStatus).every(conn => conn.connection === "disconnected");
-					let allPartial = Object.values(connectionStatus).every(conn => conn.connection === "partial");
-					if (Object.keys(connectionStatus).length === 0) {
+					if (Object.keys(connections).length === 0) {
 						return {};
 					}
 
-		
+					let allError = connections.every(conn => conn.connection === "error");
+					let allConnected = connections.every(conn => conn.connection === "connected");
+					let allDisconnected = connections.every(conn => conn.connection === "disconnected");
+					let allPartial = connections.every(conn => conn.connection === "partial");
+
 					if (allConnected) {
 
 						return {
@@ -76,7 +82,7 @@ module.exports = async function (self) {
 							bgcolor: feedback.options.bg_error, // User-selected color
 							color: feedback.options.fg_error // User-selected text color
 						};
-					} else if (allPartial || (!allConnected && !allDisconnected && !allConnected)){
+					} else if (allPartial || (!allConnected && !allDisconnected && !allError)){
 
 						return{
 							bgcolor: feedback.options.bg_warning,
@@ -88,53 +94,211 @@ module.exports = async function (self) {
 				},
 				subscribe: async (feedback) => {
 
-					if (!self.config.channelStatus[feedback.controlId]) {
-						self.config.channelStatus[feedback.controlId] = {};
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
+						self.parsedConfig.channelStatus[feedback.controlId] = {};
 					}
-				
 					// Mark all active connections as feedback-tracked
-					for (let subKey in self.config.channelStatus[feedback.controlId]) {
-
-						self.config.channelStatus[feedback.controlId][subKey].feedback = true;
-
-					}
-					self.saveConfig(self.config)
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					self.stringifyAndSave();
 				},
 				
 				unsubscribe: async (feedback) => {
-					if (!self.config.channelStatus[feedback.controlId]) return;
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
 
 					// Untrack feedback for all connections under this button
-					for (let subKey in self.config.channelStatus[feedback.controlId]) {
-						self.config.channelStatus[feedback.controlId][subKey].feedback = false;
-					}
-					self.saveConfig(self.config)
+
+					self.stringifyAndSave()
 				}
 			},
-		channel_status_custom: {
-			name: 'Channel Connection Status Boolean',
+		channel_status_connected: {
+			name: 'Channel Connection Connected',
 			type: 'boolean',
 			callback: (feedback) => {
 
-				let connectionStatus = self.config.channelStatus?.[feedback.controlId] || {};
+				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
+				if (Object.keys(connectionStatus).length === 0){
+					return {};
+				}
+				let connections = Object.values(connectionStatus).filter(
+				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
+				);
+				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
 
-				let allError = Object.values(connectionStatus).every(conn => conn.connection === "error");
-				let allConnected = Object.values(connectionStatus).every(conn => conn.connection === "connected");
-				let allDisconnected = Object.values(connectionStatus).every(conn => conn.connection === "disconnected");
-				if (Object.keys(connectionStatus).length === 0) {
+				if (Object.keys(connections).length === 0) {
 					return {};
 				}
 
+				let allConnected = connections.every(conn => conn.connection === "connected");
 	
 				// Check if we have a stored success/failure state
 				if (allConnected === true) {
 					return true
-				} else if (allError) {
+				} else{
 					return false
 				}
 	
-				return {}; 
-			}
+
+			},
+			subscribe: async (feedback) => {
+
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
+						self.parsedConfig.channelStatus[feedback.controlId] = {};
+					}
+					// Mark all active connections as feedback-tracked
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					self.stringifyAndSave();
+				},
+				
+				unsubscribe: async (feedback) => {
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
+
+					// Untrack feedback for all connections under this button
+
+					self.stringifyAndSave()
+				}
+		},
+		channel_status_errors: {
+			name: 'Channel Connection Errors',
+			type: 'boolean',
+			callback: (feedback) => {
+
+				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
+				if (Object.keys(connectionStatus).length === 0){
+					return {};
+				}
+				let connections = Object.values(connectionStatus).filter(
+				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
+				);
+				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+
+				if (Object.keys(connections).length === 0) {
+					return {};
+				}
+
+				let allError = connections.every(conn => conn.connection === "error");
+	
+				// Check if we have a stored success/failure state
+				if (allError === true) {
+					return true
+				} else{
+					return false
+				}
+			},
+			subscribe: async (feedback) => {
+
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
+						self.parsedConfig.channelStatus[feedback.controlId] = {};
+					}
+					// Mark all active connections as feedback-tracked
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					self.stringifyAndSave();
+				},
+				
+				unsubscribe: async (feedback) => {
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
+
+					// Untrack feedback for all connections under this button
+
+					self.stringifyAndSave()
+				}
+		},
+		channel_status_partial: {
+			name: 'Channel Connection Status Partial',
+			type: 'boolean',
+			callback: (feedback) => {
+
+				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
+				if (Object.keys(connectionStatus).length === 0){
+					return {};
+				}
+				let connections = Object.values(connectionStatus).filter(
+				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
+				);
+				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+
+				if (Object.keys(connections).length === 0) {
+					return {};
+				}
+
+				let allError = connections.every(conn => conn.connection === "error");
+				let allConnected = connections.every(conn => conn.connection === "connected");
+				let allDisconnected = connections.every(conn => conn.connection === "disconnected");
+				let allPartial = connections.every(conn => conn.connection === "partial");
+	
+				// Check if we have a stored success/failure state
+				if (allPartial === true || (!allConnected && !allDisconnected && !allError)) {
+					return true
+				} else{
+					return false
+				}
+			},
+			subscribe: async (feedback) => {
+
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
+						self.parsedConfig.channelStatus[feedback.controlId] = {};
+					}
+					// Mark all active connections as feedback-tracked
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					self.stringifyAndSave();
+				},
+				
+				unsubscribe: async (feedback) => {
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
+
+					// Untrack feedback for all connections under this button
+
+					self.stringifyAndSave()
+				}
+		},
+		channel_status_disconnected: {
+			name: 'Channel Connection Status Disconnected',
+			type: 'boolean',
+			callback: (feedback) => {
+
+				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
+				if (Object.keys(connectionStatus).length === 0){
+					return {};
+				}
+				let connections = Object.values(connectionStatus).filter(
+				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
+				);
+				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+
+				if (Object.keys(connections).length === 0) {
+					return {};
+				}
+
+				let allDisconnected = connections.every(conn => conn.connection === "disconnected");
+	
+				// Check if we have a stored success/failure state
+				if (allDisconnected === true) {
+					return true
+				} else{
+					return false
+				}
+			},
+			subscribe: async (feedback) => {
+
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
+						self.parsedConfig.channelStatus[feedback.controlId] = {};
+					}
+					// Mark all active connections as feedback-tracked
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					self.stringifyAndSave();
+				},
+				
+				unsubscribe: async (feedback) => {
+					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
+					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
+
+					// Untrack feedback for all connections under this button
+
+					self.stringifyAndSave()
+				}
 		}
 	});
 	
