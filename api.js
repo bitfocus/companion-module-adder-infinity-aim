@@ -2,6 +2,23 @@ const fetch = require('node-fetch-commonjs');
 const { XMLParser } = require('fast-xml-parser');
 const { InstanceStatus } = require('@companion-module/base')
 
+
+/*
+    Refreshes all lists from AIM
+*/
+async function refreshLists(self, retry = 2, rtnData = false){
+    await refreshAvailableChannels(self, retry);
+    await refreshAvailableReceivers(self, retry);
+    let presets = await getPresets(self, retry, rtnData);
+    self.stringifyAndSave();
+    self.updateActions();
+    self.updateFeedbacks();
+    if (rtnData) return presets;
+}
+
+/*
+    Refresh Channel List from AIM server.
+*/
 async function refreshAvailableChannels(self, retry = 0){
     try{
         let url = `http://${self.config.ip}/api/?v=2&method=get_channels&token=${encodeURIComponent(self.config.token)}`;
@@ -9,10 +26,13 @@ async function refreshAvailableChannels(self, retry = 0){
                     method: 'GET', // No need for POST since data is in the URL
                     headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
                 });
-        
+                
+                //Parse Response
                 let xmlText = await response.text();
                 const parser = new XMLParser();
                 let data = parser.parse(xmlText);
+
+                //Retry if error
                 if (data.api_response && !data.api_response.success)
                     {
                         if (retry>0){
@@ -28,9 +48,9 @@ async function refreshAvailableChannels(self, retry = 0){
                     }
 
 
-                
+                //If success, replace channel list
                 if (data.api_response && data.api_response.channels) {
-                    self.log("info",'Channels Fetched successful.');
+                    self.log("debug",'Channels Fetched successful.');
                     if (this.currentStatus !== InstanceStatus.Ok){
                         this.currentStatus = InstanceStatus.Ok;
                         self.updateStatus(InstanceStatus.Ok);
@@ -45,9 +65,6 @@ async function refreshAvailableChannels(self, retry = 0){
                         
                     });
                     self.parsedConfig.channelChoices = channel_options
-                    self.stringifyAndSave();
-                    await refreshAvailableReceivers(self, retry)
-                    self.updateActions();
 
                 } else {
                     self.log("warning", 'Authentication failed: No token received.');
@@ -157,67 +174,70 @@ async function connectChannel(self, rec, channel, mode, force = false, retry=2)
     }
 }
 
+/*
+    Polls the AIM server and gets current status of connections. Updates Feedback.
+*/
 async function checkConnectionStatus(self, retry=0)
 {
-    const hasPreset = Object.values(self.parsedConfig.channelStatus).some(connections => 
-        Object.values(connections)
-            .filter(value => typeof value === 'object' && value !== null)
-            .some(value => value.preset !== undefined)
-    );
 
+    //Check if any presets are used as to get preset status, we need to pull the preset list.
+    const hasPreset = Object.values(self.parsedConfig.channelStatus).some(value => value.preset !== undefined);
+    let data = null;
     let presets = null;
+
+    //If preset exists, refresh all lists and get preset list.
     if (hasPreset){
-        presets = await getPresets(self, 2, true);
+        presets = await refreshLists(self, 2, true);
     }
     
+    //Manually cleanup any buttons that aren't being tracked
     self.cleanupInactiveFeedback();
-    for (const [key, connections] of Object.entries(self.parsedConfig.channelStatus)){
 
+    //Run through all connections
+    for (const [key, status] of Object.entries(self.parsedConfig.channelStatus)){
+
+        //Check for scheduled cleanup
         if (self.parsedConfig.channelStatus[key]["cleanup"]){
             self.cleanupInactiveForKey(key);
         }
-        if (Object.keys(connections).length === 0 || !self.parsedConfig.channelStatus[key]["feedback"]){
-            continue;}
-        for (const[subkey, value] of Object.entries(connections)){
-            if (typeof self.parsedConfig.channelStatus[key][subkey] === "boolean"){
-                continue;
-            }
-            let data = null;
 
-            if(value["preset"]){
-                //console.log(self.parsedConfig.channelStatus[key])
-                Object.values(presets).forEach(entry => {
-                });
-                const presetInfo = Object.values(presets).find(entry => entry.cp_id === value.preset)
-                if(presetInfo){
-                    if(presetInfo.cp_active==="none")
-                    {
-                        if (self.parsedConfig.channelStatus[key][subkey]["connection"] === "error"){
-                            continue;
-                        }
-                        
-                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "disconnected";
-                    }else if(presetInfo.cp_active==="full"){
-                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "connected";
-                        self.log("info", `preset status ${self.parsedConfig.channelStatus[key][subkey]["connection"]}`)
-                    }else if(presetInfo.cp_active==="partial"){
-                        self.parsedConfig.channelStatus[key][subkey]["connection"] = "partial";
+        //Ensure button is tracked
+        if (status.actionId.length === 0 || !status.feedback){
+            continue;}
+
+        //Run through preset status
+        if (status.preset){
+            const presetInfo = Object.values(presets).find(entry => String(entry.cp_id) === String(status.preset))
+            if(presetInfo){
+                if(presetInfo.cp_active==="none")
+                {
+                    if (status.connection === "error"){
+                        continue;
                     }
                     
+                    status.connection = "disconnected";
+                }else if(presetInfo.cp_active==="full"){
+                    status.connection = "full";
+                    
+                }else if(presetInfo.cp_active==="partial"){
+                    status.connection = "partial";
                 }
-                continue;
+                
             }
-            
+            continue;
+        }else{
             try{
-                let url = `http://${self.config.ip}/api/?v=2&method=get_devices&&device_type=rx&filter_d_name=${encodeURIComponent(value.d_name)}&token=${encodeURIComponent(self.config.token)}`
+                //Get Current status of Receiver
+                let url = `http://${self.config.ip}/api/?v=2&method=get_devices&&device_type=rx&filter_d_name=${encodeURIComponent(status.d_name)}&token=${encodeURIComponent(self.config.token)}`
                 let response = await fetch(url, {
-                    method: 'GET', // No need for POST since data is in the URL
-                    headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
+                    method: 'GET', 
+                    headers: { 'Content-Type': 'application/xml' },
                 });
 
                 let xmlText = await response.text();
                 const parser = new XMLParser();
                 data = parser.parse(xmlText);
+                
                 if (data.api_response && !data.api_response.success)
                     {
                         const error = Array.isArray(data.api_response.errors)
@@ -225,7 +245,7 @@ async function checkConnectionStatus(self, retry=0)
                         : data.api_response.errors?.error;
                     
 
-                
+                    
                     if (error?.code === 10) {
                         await self.authenticate();
                         continue;
@@ -240,53 +260,59 @@ async function checkConnectionStatus(self, retry=0)
                         self.log("warn", "No receivers found, please check your configuration.");
                         continue;
                     }
-                    if (data.api_response.devices.device.con_c_id === value.channel)
+
+                    //Check the receiver is connected to expected channel
+                    if (data.api_response.devices.device.con_c_id === status.channel)
                     {
+                       
                         if (this.currentStatus !== InstanceStatus.Ok){
                             this.currentStatus = InstanceStatus.Ok;
                             self.updateStatus(InstanceStatus.Ok);
                         }
 
+                        //If endtime, means it is no longer connected.
                         if (data.api_response.devices.device.con_end_time)
                         {
-                            if(self.parsedConfig.channelStatus[key][subkey]["connection"]==="error")
+                            //If the connection status is an error, don't replace
+                            if(status.connection==="error")
                             {
                                 continue;
                             }
                             else
                             {
-                                self.parsedConfig.channelStatus[key][subkey]["connection"]="disconnected"
+                               status.connection="disconnected"
                             }
                             
                         }
                         else{
-                            self.parsedConfig.channelStatus[key][subkey]["connection"]="connected"
+                            status.connection="connected"
                         }
                     }
                 else{
-                    if(self.parsedConfig.channelStatus[key][subkey]["connection"]==="error")
+                    if(status.connection==="error")
                         {
                             continue;
                         }
-                    self.parsedConfig.channelStatus[key][subkey]["connection"]="disconnected"
+                    status.connection="disconnected"
 
                 }
-                }catch (error){
-                    if (data != null ){
-                        self.log("error", `${error.message}   ${JSON.stringify(data)}`)
-                        self.log('error', `Connection failed with code: ${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
-                        continue;
-                    }else{
-                        self.log('error', 'No response from AIM. Please check your configuration.');
-                        self.updateStatus(InstanceStatus.ConnectionFailure)
-                        return;
-                        
-                    }
-                }
+        }catch (error){
+            if (data != null ){
+                self.log("error", `${error.message}   ${JSON.stringify(data)}`)
+                self.log('error', `Connection failed with code: ${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
+                continue;
+            }else{
+                self.log('error', 'No response from AIM. Please check your configuration.');
+                self.updateStatus(InstanceStatus.ConnectionFailure)
+                return;
+                
             }
+        }
+    
+        self.stringifyAndSave();
+        self.checkFeedbacks(...self.feedbackList);
+        }
     }
-    self.stringifyAndSave();
-    self.checkFeedbacks(...self.feedbackList);
 }
 
 
@@ -330,10 +356,8 @@ async function getPresets(self, retry=0, rtnData = false)
             })
 
             self.parsedConfig.presets = preset_options
-            self.stringifyAndSave();
-            self.updateActions();
             if (rtnData){
-                return data.api_response.connection_presets.connection_preset;
+                return presets;
             }
         }else{
             self.log("info", "There were no presets defined on the AIM server.")
@@ -419,4 +443,4 @@ async function disconnect(self, type, id, force = 0){
 
 
 
-module.exports = { refreshAvailableChannels, connectChannel, checkConnectionStatus, getPresets, connectPreset, disconnect }
+module.exports = { refreshAvailableChannels, connectChannel, checkConnectionStatus, getPresets, connectPreset, disconnect, refreshLists }

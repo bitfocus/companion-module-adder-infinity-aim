@@ -3,7 +3,7 @@ const { combineRgb } = require('@companion-module/base')
 module.exports = async function (self) {
 	self.setFeedbackDefinitions({
 			channel_status_pre_configured: {
-				name: 'Channel Connection Status Pre-Configured',
+				name: 'Channel Connection Status Pre-Configured (Companion Only)',
 				type: 'advanced',
 				options: [
 					{
@@ -51,14 +51,14 @@ module.exports = async function (self) {
 				],
 				callback: (feedback) => {
 
-					let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
-					if (Object.keys(connectionStatus).length === 0){
-					return {};
-				}
-					let connections = Object.values(connectionStatus).filter(
-					conn => typeof conn === 'object' && conn !== null && 'connection' in conn
-					);
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+				//Get all connections that have the correct control ID
+				let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
+
+				//Set feedback status
+				connections.forEach(conn => {
+					conn.feedback = true;
+				});
+			
 
 					if (Object.keys(connections).length === 0) {
 						return {};
@@ -94,212 +94,145 @@ module.exports = async function (self) {
 				},
 				subscribe: async (feedback) => {
 
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
-						self.parsedConfig.channelStatus[feedback.controlId] = {};
-					}
-					// Mark all active connections as feedback-tracked
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
+					//Get all connections for the button and set true
+					let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
+					connections.forEach(conn => {
+						conn.feedback = true;
+					});
+
 					self.stringifyAndSave();
 				},
 				
 				unsubscribe: async (feedback) => {
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
 
-					// Untrack feedback for all connections under this button
+					//Set feedback flag on connections
+					let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
+					connections.forEach(conn => {
+						conn.feedback = false;
+					});
 
 					self.stringifyAndSave()
 				}
 			},
-		channel_status_connected: {
-			name: 'Channel Connection Connected',
+		channel_status_boolean: {
+			name: 'Channel Connection Status',
 			type: 'boolean',
+			options: [
+				{
+					id: 'receiver',
+					type: 'dropdown',
+					label: 'Receiver',
+					choices: self.parsedConfig.receiverChoices,
+					default: self.parsedConfig.receiverChoices[0].id
+				},
+				{
+					id: 'channel',
+					type: 'dropdown',
+					label: 'Channel',
+					choices: self.parsedConfig.channelChoices,
+					default: self.parsedConfig.channelChoices[0].id
+				},
+				{
+					id: 'connectionState',
+					type: 'dropdown',
+					label: 'Connection State',
+					choices: [
+						{id: "connected", label: "Connected"}, 
+						{id: "disconnected", label: "Disconnected"},
+						{id: "error", label: "Error"}
+					],
+					default: "connected"
+				},
+			],			
+			learn: async (action) => {
+				await refreshLists(self, 3);
+			},
 			callback: (feedback) => {
 
-				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
-				if (Object.keys(connectionStatus).length === 0){
-					return {};
-				}
-				let connections = Object.values(connectionStatus).filter(
-				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
-				);
-				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-
-				if (Object.keys(connections).length === 0) {
+				//Ensure key exists in status
+				let key = `${feedback.options.receiver}_${feedback.options.channel}`
+				let connectionStatus = self.parsedConfig.channelStatus?.[key] || {};
+				if (!connectionStatus) {
 					return {};
 				}
 
-				let allConnected = connections.every(conn => conn.connection === "connected");
-	
-				// Check if we have a stored success/failure state
-				if (allConnected === true) {
+				//Set feedback and check against connection state
+				connectionStatus.feedback=true;
+				if (connectionStatus.connection === feedback.options.connectionState) {
 					return true
 				} else{
 					return false
 				}
-	
-
-			},
-			subscribe: async (feedback) => {
-
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
-						self.parsedConfig.channelStatus[feedback.controlId] = {};
-					}
-					// Mark all active connections as feedback-tracked
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-					self.stringifyAndSave();
+				},
+				subscribe: async (feedback) => {
+					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					if (!self.parsedConfig.channelStatus[key]) return;
+					self.parsedConfig.channelStatus[key].feedback = true;
+					self.stringifyAndSave()
 				},
 				
 				unsubscribe: async (feedback) => {
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
-
-					// Untrack feedback for all connections under this button
-
+					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					if (!self.parsedConfig.channelStatus[key]) return;
+					self.parsedConfig.channelStatus[key].feedback = false;
 					self.stringifyAndSave()
 				}
 		},
-		channel_status_errors: {
-			name: 'Channel Connection Errors',
+		preset_status_boolean: {
+			name: 'Preset Connection Status',
 			type: 'boolean',
+			options: [
+				{
+					id: 'preset',
+					type: 'dropdown',
+					label: 'Preset',
+					choices: self.parsedConfig.presets,
+					default: self.parsedConfig.presets[0].id
+				},
+				{
+					id: 'connectionState',
+					type: 'dropdown',
+					label: 'Connection State',
+					choices: [
+						{id: "full", label: "Connected"}, 
+						{id: "disconnected", label: "Disconnected"},
+						{id: "error", label: "Error"},
+						{id: "partial", label: "Partial Connection"}
+					],
+					default: "full"
+				},
+			],
+			learn: async (action) => {
+				await refreshLists(self, 3);
+			},
 			callback: (feedback) => {
-
-				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
-				if (Object.keys(connectionStatus).length === 0){
+				let key = `${feedback.options.preset}`
+				let connectionStatus = self.parsedConfig.channelStatus?.[key] || {};
+				if (!connectionStatus) {
 					return {};
 				}
-				let connections = Object.values(connectionStatus).filter(
-				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
-				);
-				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-
-				if (Object.keys(connections).length === 0) {
-					return {};
-				}
-
-				let allError = connections.every(conn => conn.connection === "error");
-	
-				// Check if we have a stored success/failure state
-				if (allError === true) {
+				connectionStatus.feedback=true;
+				if (connectionStatus.connection === feedback.options.connectionState) {
 					return true
 				} else{
 					return false
 				}
-			},
-			subscribe: async (feedback) => {
-
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
-						self.parsedConfig.channelStatus[feedback.controlId] = {};
-					}
-					// Mark all active connections as feedback-tracked
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-					self.stringifyAndSave();
+				},
+				subscribe: async (feedback) => {
+					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					if (!self.parsedConfig.channelStatus[key]) return;
+					self.parsedConfig.channelStatus[key].feedback = true;
+					self.stringifyAndSave()
 				},
 				
 				unsubscribe: async (feedback) => {
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
-
-					// Untrack feedback for all connections under this button
-
+					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					if (!self.parsedConfig.channelStatus[key]) return;
+					self.parsedConfig.channelStatus[key].feedback = false;
 					self.stringifyAndSave()
 				}
 		},
-		channel_status_partial: {
-			name: 'Channel Connection Status Partial',
-			type: 'boolean',
-			callback: (feedback) => {
-
-				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
-				if (Object.keys(connectionStatus).length === 0){
-					return {};
-				}
-				let connections = Object.values(connectionStatus).filter(
-				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
-				);
-				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-
-				if (Object.keys(connections).length === 0) {
-					return {};
-				}
-
-				let allError = connections.every(conn => conn.connection === "error");
-				let allConnected = connections.every(conn => conn.connection === "connected");
-				let allDisconnected = connections.every(conn => conn.connection === "disconnected");
-				let allPartial = connections.every(conn => conn.connection === "partial");
 	
-				// Check if we have a stored success/failure state
-				if (allPartial === true || (!allConnected && !allDisconnected && !allError)) {
-					return true
-				} else{
-					return false
-				}
-			},
-			subscribe: async (feedback) => {
-
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
-						self.parsedConfig.channelStatus[feedback.controlId] = {};
-					}
-					// Mark all active connections as feedback-tracked
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-					self.stringifyAndSave();
-				},
-				
-				unsubscribe: async (feedback) => {
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
-
-					// Untrack feedback for all connections under this button
-
-					self.stringifyAndSave()
-				}
-		},
-		channel_status_disconnected: {
-			name: 'Channel Connection Status Disconnected',
-			type: 'boolean',
-			callback: (feedback) => {
-
-				let connectionStatus = self.parsedConfig.channelStatus?.[feedback.controlId] || {};
-				if (Object.keys(connectionStatus).length === 0){
-					return {};
-				}
-				let connections = Object.values(connectionStatus).filter(
-				conn => typeof conn === 'object' && conn !== null && 'connection' in conn
-				);
-				self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-
-				if (Object.keys(connections).length === 0) {
-					return {};
-				}
-
-				let allDisconnected = connections.every(conn => conn.connection === "disconnected");
-	
-				// Check if we have a stored success/failure state
-				if (allDisconnected === true) {
-					return true
-				} else{
-					return false
-				}
-			},
-			subscribe: async (feedback) => {
-
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) {
-						self.parsedConfig.channelStatus[feedback.controlId] = {};
-					}
-					// Mark all active connections as feedback-tracked
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = true;
-					self.stringifyAndSave();
-				},
-				
-				unsubscribe: async (feedback) => {
-					if (!self.parsedConfig.channelStatus[feedback.controlId]) return;
-					self.parsedConfig.channelStatus[feedback.controlId].feedback = false;
-
-					// Untrack feedback for all connections under this button
-
-					self.stringifyAndSave()
-				}
-		}
 	});
 	
 }

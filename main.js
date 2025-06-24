@@ -4,7 +4,7 @@ const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
 const { getAuthToken } = require('./auth');
-const { refreshAvailableChannels, checkConnectionStatus } = require('./api');
+const { refreshLists, checkConnectionStatus } = require('./api');
 class ModuleInstance extends InstanceBase {
 	constructor(internal) {
 		super(internal)
@@ -12,12 +12,12 @@ class ModuleInstance extends InstanceBase {
 
 	async init(config) {
 		this.config = config
-		this.feedbackList = ["channel_status_pre_configured", "channel_status_connected", "channel_status_errors", "channel_status_partial", "channel_status_disconnected"]
+		this.feedbackList = ["channel_status_pre_configured", "channel_status_boolean", "preset_status_boolean"]
 		this.subscribeActionsUsed = false;
 		this.currentStatus = null;
 
 
-		//Setup config dicts if they don't exist
+		//Setup config dicts if they don't exist or running for the first time since v1.0 clear.
 		if (!this.config.firstRun){
 			this.config.receiverChoices = JSON.stringify([{id: "None", label: "None"}]);
 			this.config.channelChoices = JSON.stringify([{id: "None", label: "None"}]);
@@ -37,17 +37,30 @@ class ModuleInstance extends InstanceBase {
 		if(!this.config.channelStatus || !this.config.firstRun){
 			this.config.channelStatus = JSON.stringify({});
 		}
+
+		//Load the Parsed version of config
 		this.loadParsedConfig();
 		this.log("debug", "Starting AIM module")
-		this.updateStatus('connecting', 'Waiting for auth');
-		
-		//this.handleHttpRequest
-		this.currentStatus = InstanceStatus.Ok;
-		this.updateStatus(InstanceStatus.Ok)
+		this.currentStatus=InstanceStatus.Connecting;
+		this.updateStatus(InstanceStatus.Connecting, 'Waiting for auth');
+
+		//Get a Token if none exists
+		let auth = false;
+		if (this.config.token){
+			auth = true;
+		}else{
+			auth = await this.authenticate()
+		}
+
+		//Update status
+		if (auth) {
+			this.currentStatus = InstanceStatus.Ok;
+			this.updateStatus(InstanceStatus.Ok)
+		}
 		this.updateActions() // export actions
 		this.updateFeedbacks() // export feedbacks
 		this.updateVariableDefinitions() // export variable definitions
-		if(this.config.poll){this.startPolling()}		
+		if(this.config.poll && this.currentStatus===InstanceStatus.Ok){this.startPolling()}		
 	}
 
 	// When module gets deleted
@@ -55,6 +68,7 @@ class ModuleInstance extends InstanceBase {
 		this.log('debug', 'destroy')
 	}
 
+	//Loads the config into a Parsed version for use within the module.
 	loadParsedConfig() {
 	this.parsedConfig = {
 		receiverChoices: JSON.parse(this.config.receiverChoices),
@@ -67,7 +81,7 @@ class ModuleInstance extends InstanceBase {
 		}
 	}
 
-	// Before saving
+	// Stringifies the working parsed config and saves
 	stringifyAndSave() {
 		this.config.receiverChoices = JSON.stringify(this.parsedConfig.receiverChoices);
 		this.config.channelChoices = JSON.stringify(this.parsedConfig.channelChoices);
@@ -76,12 +90,22 @@ class ModuleInstance extends InstanceBase {
 		this.saveConfig(this.config);
 	}
 
+	/*
+		Handles manual cleanup in Buttons as Subscribe/Unsubscribe actions are currently not available.
+		Accepts a Key, schedules the cleanup for 10 seconds after, and clears any inactive objects.
+	*/
+
 	scheduleCleanup(key){
+
+		//Sets the cleanup flag
 		this.parsedConfig.channelStatus[key]["cleanup"]=true;
+
+		//If polling is used, uses the poll timer to activate cleanup
 		if (this.config.poll) {
 			return;
 		}
 
+		//Creates cleanup map to track key timers
 		if (this._cleanupTimers === undefined) {
 			this._cleanupTimers = {};
 		}
@@ -89,32 +113,38 @@ class ModuleInstance extends InstanceBase {
 		// Avoid multiple timers for the same key
 		if (this._cleanupTimers[key]) return;
 
+		//Timeout function
 		this._cleanupTimers[key] = setTimeout(() => {
+
+			//Cleanup keys if no feedback is used.
 			this.cleanupInactiveFeedback();
+
+			//If the Key exists, check if active and clean
 			if (this.parsedConfig.channelStatus[key]){
-				console.log("DELETING: ", key)
 				this.cleanupInactiveForKey(key);
 			}
+			
+			//Delete timer
 			delete this._cleanupTimers[key];
 		}, 10000);
 	}
 
+	/*
+		Accepts a Key. Checks if the key is active. If the key isn't active, it's deleted.
+		If active, marks as inactive (This will revert if the button is pressed) and sets cleanup flag.
+	*/
 	cleanupInactiveForKey(key){
-
-		for (let subKey in this.parsedConfig.channelStatus[key]) {
-			if (typeof this.parsedConfig.channelStatus[key][subKey] === "boolean"){
-				continue;
-			}
-			if (!this.parsedConfig.channelStatus[key][subKey].active){
-				delete this.parsedConfig.channelStatus[key][subKey];
+			if (!this.parsedConfig.channelStatus[key].active){
+				delete this.parsedConfig.channelStatus[key];
 			}else{
-				this.parsedConfig.channelStatus[key][subKey].active = false;
+				this.parsedConfig.channelStatus[key].active = false;
+				this.parsedConfig.channelStatus[key].cleanup = false;
 			}
-		}
-		this.parsedConfig.channelStatus[key]["cleanup"] = false;
 		this.stringifyAndSave();
 		this.checkFeedbacks(...this.feedbackList);
 	}
+
+	//Cleans up any keys that aren't being used for feedback.
 	cleanupInactiveFeedback(){
 		const keysToDelete = Object.entries(this.parsedConfig.channelStatus)
 		.filter(([_, value]) => !value.feedback && !value.subscribed)
@@ -125,16 +155,21 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async configUpdated(config) {
+		let auth = true;
 
 		//reset token if username is changed
-		if(config.username != this.config.username){
+		if(config.username != this.config.username || config.ip != this.config.ip){
+			this.stopPolling();
 			this.config = config
+			this.currentStatus = InstanceStatus.Connecting
+			this.updateStatus(InstanceStatus.Connecting);
 			this.config.token = null;
-			this.saveConfig(this.config);
+			auth = await this.authenticate()
+			this.stringifyAndSave();
 		}
 		this.config = config
 		//start/stop polling
-		if(!this.config.poll){
+		if(!this.config.poll || !auth || this.currentStatus!=InstanceStatus.Ok){
 			this.stopPolling();
 		}else{
 			this.startPolling();
@@ -151,20 +186,24 @@ class ModuleInstance extends InstanceBase {
 
 				//Await Token
 				this.config.token = await getAuthToken(this);
-				
 				//Check if token was received.
 				if (this.config.token) {
-					if (this.currentStatus !== InstanceStatus.Ok){
+					if (this.currentStatus != InstanceStatus.Ok){
 						this.currentStatus = InstanceStatus.Ok
 						this.updateStatus(InstanceStatus.Ok);
+						refreshLists(this);
 					}
-					this.saveConfig(this.config);
+					this.stringifyAndSave();
+					return true;
 				} else {
+					this.currentStatus = InstanceStatus.AuthenticationFailure;
 					this.updateStatus(InstanceStatus.AuthenticationFailure);
 					this.log("error", "Could not log in. Please check your configuration.");
+					return false;
 				}
 			} catch (error) {
 				this.log("error", `Authentication process failed: ${error.message}`);
+				return false;
 			}
 		}
 	}
