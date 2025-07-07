@@ -123,14 +123,14 @@ module.exports = async function (self) {
 					type: 'dropdown',
 					label: 'Receiver',
 					choices: self.parsedConfig.receiverChoices,
-					default: self.parsedConfig.receiverChoices[0].id
+					default: self.parsedConfig.receiverChoices.length > 0 ? self.parsedConfig.receiverChoices[0].id : 'None'
 				},
 				{
 					id: 'channel',
 					type: 'dropdown',
 					label: 'Channel',
 					choices: self.parsedConfig.channelChoices,
-					default: self.parsedConfig.channelChoices[0].id
+					default: self.parsedConfig.channelChoices.length > 0 ? self.parsedConfig.channelChoices[0].id : 'None'
 				},
 				{
 					id: 'connectionState',
@@ -187,7 +187,7 @@ module.exports = async function (self) {
 					type: 'dropdown',
 					label: 'Preset',
 					choices: self.parsedConfig.presets,
-					default: self.parsedConfig.presets[0].id
+					default: self.parsedConfig.presets.length > 0 ? self.parsedConfig.presets[0].id : 'None'
 				},
 				{
 					id: 'connectionState',
@@ -219,14 +219,14 @@ module.exports = async function (self) {
 				}
 				},
 				subscribe: async (feedback) => {
-					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					let key = `${feedback.options.preset}`
 					if (!self.parsedConfig.channelStatus[key]) return;
 					self.parsedConfig.channelStatus[key].feedback = true;
 					self.stringifyAndSave()
 				},
 				
 				unsubscribe: async (feedback) => {
-					let key = `${feedback.options.receiver}_${feedback.options.channel}`
+					let key = `${feedback.options.preset}`
 					if (!self.parsedConfig.channelStatus[key]) return;
 					self.parsedConfig.channelStatus[key].feedback = false;
 					self.stringifyAndSave()
