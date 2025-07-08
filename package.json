@@ -1,6 +1,6 @@
 {
 	"name": "companion-module-adder-infinity-aim",
-	"version": "2.0.0-beta2",
+	"version": "2.0.0",
 	"main": "main.js",
 	"scripts": {
 		"format": "prettier -w .",
