@@ -41,7 +41,7 @@ class ModuleInstance extends InstanceBase {
 		}
 
 		//Initialize dicts and remove depricated dicts
-		if (!this.config.users){
+		if (this.config.users){
 			this.config.users = JSON.stringify({});;
 		}
 

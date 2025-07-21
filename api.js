@@ -129,9 +129,7 @@ async function refreshAvailableReceivers(self, retry=0){
     }
 }
 
-
-async function connectChannel(self, rec, channel, mode, user, password = "", force = false, retry=2)
-{
+async function getToken(self, user, password){
     var token = null;
 
 
@@ -151,6 +149,12 @@ async function connectChannel(self, rec, channel, mode, user, password = "", for
             token = self.parsedConfig.users[user]["token"];
         }
     }
+    return token;
+}
+
+async function connectChannel(self, rec, channel, mode, user, password = "", force = false, retry=2)
+{
+    var token = await getToken(self, user, password);
     let url = `http://${self.config.ip}/api/?v=5&method=connect_channel&token=${encodeURIComponent(token)}&c_id=${encodeURIComponent(channel)}&rx_id=${encodeURIComponent(rec)}&mode=${encodeURIComponent(mode)}`
     
     try
@@ -409,9 +413,10 @@ async function getPresets(self, retry=0, rtnData = false)
     }
 }
 
-async function connectPreset(self, cp_id, mode='s', force=0)
+async function connectPreset(self, cp_id, username, password, mode='s', force=0)
 {
-     let url = `http://${self.config.ip}/api/?v=5&method=connect_preset&token=${encodeURIComponent(self.config.token)}&id=${encodeURIComponent(cp_id)}&mode=${encodeURIComponent(mode)}&force=${encodeURIComponent(force)}`
+    const token = await getToken(self, username, password)
+     let url = `http://${self.config.ip}/api/?v=5&method=connect_preset&token=${encodeURIComponent(token)}&id=${encodeURIComponent(cp_id)}&mode=${encodeURIComponent(mode)}&force=${encodeURIComponent(force)}`
      try
      {
          let response = await fetch(url, {

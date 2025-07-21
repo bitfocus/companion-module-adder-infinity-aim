@@ -145,13 +145,42 @@ module.exports = function (self) {
 					type: 'checkbox',
 					label: 'Force',
 					default: false
-				}
+				},
+				{
+					id: 'userCheckbox',
+					type: 'checkbox',
+					label: "Use a different user?",
+					default: false,
+					tooltip: "Specify a different user to connect this channel."
+				},
+				{
+					id: 'username',
+					type: 'textinput',
+					label: 'Connection User',
+					isVisible: (options) => {
+						return options.userCheckbox === true
+					},
+				},
+				{
+					id: 'password',
+					type: 'textinput',
+					label: 'Connection Password',
+					isVisible: (options) => {
+						return options.userCheckbox === true
+					},
+				},
 			],
 			learn: async (action) => {
 				await refreshLists(self, 3);
 			},
 			callback: async (action) => {
-				let success = await connectPreset(self, action.options.preset, action.options.mode, action.options.force)
+				let success = null;
+				if (action.options.userCheckbox){
+					success = await connectPreset(self, action.options.preset, action.options.username, action.options.password,  action.options.mode, action.options.force)
+				}else{
+					success = await connectPreset(self, action.options.preset, self.config.username, self.config.password, action.options.mode, action.options.force);
+				}
+
 				let key = action.options.preset
 				if (self.cachedPresets) {
 					delete self.cachedPresets.time;
