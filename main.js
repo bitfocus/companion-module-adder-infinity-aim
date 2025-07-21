@@ -11,20 +11,44 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async init(config) {
-		this.config = config
+		this.config = config;
 		this.feedbackList = ["channel_status_pre_configured", "channel_status_boolean", "preset_status_boolean"]
 		this.subscribeActionsUsed = false;
 		this.currentStatus = null;
+		this.errorTracker = new Set();
+		this.advancedFeedback = {};
+		this.CONN = Object.freeze({
+			CONNECTED: 'connected',
+			DISCONNECTED: 'disconnected',
+			ERROR: 'error',
+			PARTIAL: 'partial',
+			FULL: 'full',
+		});
 
+		//cleanup any leftover cache 
+		this.startCleanupTimers();
 
-		//Setup config dicts if they don't exist or running for the first time since v1.0 clear.
-		if (!this.config.firstRun){
-			this.config.receiverChoices = JSON.stringify([{id: "None", label: "None"}]);
-			this.config.channelChoices = JSON.stringify([{id: "None", label: "None"}]);
-			this.config.presets = JSON.stringify([{id: "None", label: "None"}]);
-			this.config.channelStatus = JSON.stringify({});
-			this.config.firstRun=1;
+		//Create Cache
+		this.cachedReceivers = {};
+		this.cachedPresets = {};
+		this.receiverRequests = {};
+		this.presetRequests = {};
+		this.cachedTimeout = null;
+		if (this.config.pollInterval <= 5000 ){
+			this.cachedTimeout = this.config.pollInterval - 500;
+		}else{
+			this.cachedTimeout = 5000;
 		}
+
+		//Initialize dicts and remove depricated dicts
+		if (!this.config.users){
+			this.config.users = JSON.stringify({});;
+		}
+
+		if (this.config.channelStatus){
+			delete this.config.channelStatus;
+		}
+
 		if(!this.config.receiverChoices){
 			this.config.receiverChoices = JSON.stringify([{id: "None", label: "None"}]);
 		}
@@ -34,13 +58,10 @@ class ModuleInstance extends InstanceBase {
 		if(!this.config.presets){
 			this.config.presets = JSON.stringify([{id: "None", label: "None"}]);
 		}
-		if(!this.config.channelStatus || !this.config.firstRun){
-			this.config.channelStatus = JSON.stringify({});
-		}
 
 		//Load the Parsed version of config
 		this.loadParsedConfig();
-		this.log("debug", "Starting AIM module")
+		this.log("debug", "Starting AIM module");
 		this.currentStatus=InstanceStatus.Connecting;
 		this.updateStatus(InstanceStatus.Connecting, 'Waiting for auth');
 
@@ -57,6 +78,7 @@ class ModuleInstance extends InstanceBase {
 			this.currentStatus = InstanceStatus.Ok;
 			this.updateStatus(InstanceStatus.Ok)
 		}
+		
 		this.updateActions() // export actions
 		this.updateFeedbacks() // export feedbacks
 		this.updateVariableDefinitions() // export variable definitions
@@ -68,17 +90,46 @@ class ModuleInstance extends InstanceBase {
 		this.log('debug', 'destroy')
 	}
 
+	startCleanupTimers(){
+		this.receiverTimer = setInterval(() => this.cleanupStaleReceivers(),  60 * 60 * 1000);
+		this.userTimer = setInterval(() => this.cleanupStaleUsers(),  24*60 * 60 * 1000);
+	}
+
+	//Run a cleanup for old users.
+	cleanupStaleUsers() {
+		const now = Date.now();
+		const oneWeek = 7*24*60*60*1000;
+
+		for (const userName in this.parsedConfig.users) {
+			const session =  this.parsedConfig.users[userName];
+			if (now - session.lastUsed > oneWeek) {
+				this.log('debug', `Removing stale user session for ${userName}`);
+				delete this.parsedConfig.users[userName];
+				}
+			}
+	}
+
+	cleanupStaleReceivers() {
+		const now = Date.now();
+
+		for (const key in this.cachedReceivers) {
+			const entry = this.cachedReceivers[key];
+
+			if (now - entry.time > 60*1000) {
+				this.log('debug', `Removing stale cached receiver: ${key}`);
+				delete this.cachedReceivers[key];
+			}
+		}
+	}
+
 	//Loads the config into a Parsed version for use within the module.
 	loadParsedConfig() {
 	this.parsedConfig = {
 		receiverChoices: JSON.parse(this.config.receiverChoices),
 		channelChoices: JSON.parse(this.config.channelChoices),
 		presets: JSON.parse(this.config.presets),
-		channelStatus: JSON.parse(this.config.channelStatus)
+		users: JSON.parse(this.config.users)
 		};
-		for (let key in this.parsedConfig.channelStatus){
-			this.parsedConfig.channelStatus[key].feedback = false;
-		}
 	}
 
 	// Stringifies the working parsed config and saves
@@ -86,7 +137,7 @@ class ModuleInstance extends InstanceBase {
 		this.config.receiverChoices = JSON.stringify(this.parsedConfig.receiverChoices);
 		this.config.channelChoices = JSON.stringify(this.parsedConfig.channelChoices);
 		this.config.presets = JSON.stringify(this.parsedConfig.presets);
-		this.config.channelStatus = JSON.stringify(this.parsedConfig.channelStatus);
+		this.config.users = JSON.stringify(this.parsedConfig.users)
 		this.saveConfig(this.config);
 	}
 
@@ -94,65 +145,6 @@ class ModuleInstance extends InstanceBase {
 		Handles manual cleanup in Buttons as Subscribe/Unsubscribe actions are currently not available.
 		Accepts a Key, schedules the cleanup for 10 seconds after, and clears any inactive objects.
 	*/
-
-	scheduleCleanup(key){
-
-		//Sets the cleanup flag
-		this.parsedConfig.channelStatus[key]["cleanup"]=true;
-
-		//If polling is used, uses the poll timer to activate cleanup
-		if (this.config.poll) {
-			return;
-		}
-
-		//Creates cleanup map to track key timers
-		if (this._cleanupTimers === undefined) {
-			this._cleanupTimers = {};
-		}
-
-		// Avoid multiple timers for the same key
-		if (this._cleanupTimers[key]) return;
-
-		//Timeout function
-		this._cleanupTimers[key] = setTimeout(() => {
-
-			//Cleanup keys if no feedback is used.
-			this.cleanupInactiveFeedback();
-
-			//If the Key exists, check if active and clean
-			if (this.parsedConfig.channelStatus[key]){
-				this.cleanupInactiveForKey(key);
-			}
-			
-			//Delete timer
-			delete this._cleanupTimers[key];
-		}, 10000);
-	}
-
-	/*
-		Accepts a Key. Checks if the key is active. If the key isn't active, it's deleted.
-		If active, marks as inactive (This will revert if the button is pressed) and sets cleanup flag.
-	*/
-	cleanupInactiveForKey(key){
-			if (!this.parsedConfig.channelStatus[key].active){
-				delete this.parsedConfig.channelStatus[key];
-			}else{
-				this.parsedConfig.channelStatus[key].active = false;
-				this.parsedConfig.channelStatus[key].cleanup = false;
-			}
-		this.stringifyAndSave();
-		this.checkFeedbacks(...this.feedbackList);
-	}
-
-	//Cleans up any keys that aren't being used for feedback.
-	cleanupInactiveFeedback(){
-		const keysToDelete = Object.entries(this.parsedConfig.channelStatus)
-		.filter(([_, value]) => !value.feedback && !value.subscribed)
-		.map(([key, _]) => key);
-		for (let keys of keysToDelete){
-			delete this.parsedConfig.channelStatus[keys];
-		}
-	}
 
 	async configUpdated(config) {
 		let auth = true;
@@ -164,7 +156,7 @@ class ModuleInstance extends InstanceBase {
 			this.currentStatus = InstanceStatus.Connecting
 			this.updateStatus(InstanceStatus.Connecting);
 			this.config.token = null;
-			auth = await this.authenticate()
+			auth = await this.authenticate(config.username, config.password)
 			this.stringifyAndSave();
 		}
 		this.config = config
@@ -176,22 +168,28 @@ class ModuleInstance extends InstanceBase {
 		}
 	}
 
-	async authenticate() {
+	async authenticate(username, password) {
 
 		//If the IP and Username are set, try authentication
-		if (this.config.ip && this.config.username) {
+		if (this.config.ip && username) {
 			this.log("info", "Authenticating with the AIM server.");
 	
 			try {
 
 				//Await Token
-				this.config.token = await getAuthToken(this);
+				var token = await getAuthToken(this, username, password);
+
 				//Check if token was received.
-				if (this.config.token) {
+				if (token) {
 					if (this.currentStatus != InstanceStatus.Ok){
 						this.currentStatus = InstanceStatus.Ok
 						this.updateStatus(InstanceStatus.Ok);
 						refreshLists(this);
+					}
+					if(username == this.config.username){
+						this.config.token = token;
+					}else{
+						this.parsedConfig.users[username]["token"]=token;
 					}
 					this.stringifyAndSave();
 					return true;
@@ -240,7 +238,8 @@ class ModuleInstance extends InstanceBase {
 				tooltip: "Refresh feedbacks for each buttons selected channel",
 				label: "Channel Poll Interval",
 				width: 4,
-				default: 0
+				min: 1000,
+				default: 5000
 			},
 			{
 				type: 'checkbox',
@@ -269,7 +268,7 @@ class ModuleInstance extends InstanceBase {
 		if (this.config.pollInterval && this.config.poll) {
 			this.currentPollInterval = this.config.pollInterval; // Store the current interval
 			this.pollData = setInterval(() => {
-				checkConnectionStatus(this);
+				this.checkFeedbacks(...this.feedbackList);
 			}, this.config.pollInterval);
 		}
 	}

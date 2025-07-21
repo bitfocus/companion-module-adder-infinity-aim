@@ -1,6 +1,6 @@
 {
 	"name": "companion-module-adder-infinity-aim",
-	"version": "2.0.0",
+	"version": "2.1.0",
 	"main": "main.js",
 	"scripts": {
 		"format": "prettier -w .",
@@ -12,12 +12,12 @@
 		"url": "git+https://github.com/bitfocus/companion-module-adder-infinity-aim.git"
 	},
 	"dependencies": {
-		"@companion-module/base": "~1.11.2",
+		"@companion-module/base": "~1.12.1",
 		"fast-xml-parser": "^5.0.8",
 		"node-fetch-commonjs": "^3.3.2"
 	},
 	"devDependencies": {
-		"@companion-module/tools": "^2.1.1",
+		"@companion-module/tools": "^2.3.0",
 		"prettier": "^3.4.2"
 	},
 	"prettier": "@companion-module/tools/.prettierrc.json",

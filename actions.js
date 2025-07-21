@@ -32,96 +32,88 @@ module.exports = function (self) {
 					default: false,
 					tooltip: "Forces the channel to connect even if another user is logged in.\n*API User must have permission to channel\n*API User must be admin or the \'Grant All Users Force Disconnect\' setting must be enabled on the server."
 				
-				}
+				},
+				{
+					id: 'userCheckbox',
+					type: 'checkbox',
+					label: "Use a different user?",
+					default: false,
+					tooltip: "Specify a different user to connect this channel."
+				},
+				{
+					id: 'username',
+					type: 'textinput',
+					label: 'Connection User',
+					isVisible: (options) => {
+						return options.userCheckbox === true
+					},
+				},
+				{
+					id: 'password',
+					type: 'textinput',
+					label: 'Connection Password',
+					isVisible: (options) => {
+						return options.userCheckbox === true
+					},
+				},
 			],
 			learn: async (action) => {
 				await refreshLists(self, 3);
 			},
 			callback: async (action) => {
 
+				let success = null;
 				//Try connecting the channel
-				let success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, action.options.force);
-				
-				//Set key to button id
+				if(action.options.userCheckbox){
+					let success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, action.options.username, action.options.password, action.options.force);
+				}else{
+					success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, self.config.username, self.config.password, action.options.force);
+				}
+
 				//let key = action.controlId;
-				let key = `${action.options.receiver}_${action.options.channel}`
+				
 
 				//Get the Receiver Name
 				const selectedReceiver = self.parsedConfig.receiverChoices.find(r => r.id === action.options.receiver);
 				const label = selectedReceiver ? selectedReceiver.label : "Unknown";
+				let key = `${label}_${action.options.channel}`
 
-				//Set channel status and save config
-				if (!self.parsedConfig.channelStatus[key])
-				{
-					self.parsedConfig.channelStatus[key] = {
-						subscribed: false, 
-						cleanup: false, 
-						feedback: false,
-						active: true,
-						receiver: action.options.receiver, 
-						channel: action.options.channel, 
-						connection: success ? "connected" : "error" , 
-						d_name: label, 
-						actionId: [action.controlId]
-					}
-				}else{
-					if(self.parsedConfig.channelStatus[key].d_name==="Unknown") self.parsedConfig.channelStatus[key].d_name = selectedReceiver ? selectedReceiver.label : "Unknown"; 
-
-					self.parsedConfig.channelStatus[key]["connection"] = success ? "connected" : "error";
-					self.parsedConfig.channelStatus[key]["active"]=true;
-					if (!self.parsedConfig.channelStatus[key]["actionId"].includes(action.controlId)) self.parsedConfig.channelStatus[key]["actionId"].push(action.controlId);
-					
+				const cacheKey = label;
+				if (self.cachedReceivers && self.cachedReceivers[cacheKey]) {
+					delete self.cachedReceivers[cacheKey]; // Force next call to be fresh
 				}
 
-				self.checkFeedbacks(...self.feedbackList);
-				if (!self.parsedConfig.channelStatus[key]["subscribed"]){
-					Object.entries(self.parsedConfig.channelStatus)
-						.filter(([_, conn]) => conn.actionId.includes(action.controlId))
-						.forEach(([key, _]) => {
-							self.scheduleCleanup(key);
-						});
+
+				if(self.advancedFeedback[action.controlId]){
+					self.advancedFeedback[action.controlId][key]={d_name: label, channel: action.options.channel};
+				}
+				if (!success){
+					self.errorTracker.add(key);
+				}else{
+					self.errorTracker.delete(key);
 				}
 				
-				self.stringifyAndSave()
 
 				//Update feedbacks
 				self.checkFeedbacks(...self.feedbackList);
 
 				},
-				subscribe: async (action) => {
-					//Create dict element when subscribing *Need to allow for multiple actions per button here.
+					subscribe: async (action) => {
+					let key = `${action.options.receiver}_${action.options.channel}`
+
+					//Get the Receiver Name
 					const selectedReceiver = self.parsedConfig.receiverChoices.find(r => r.id === action.options.receiver);
 					const label = selectedReceiver ? selectedReceiver.label : "Unknown";
-					let key = `${action.options.receiver}_${action.options.channel}`
-					if (!self.parsedConfig.channelStatus[key])
-						{
-							self.parsedConfig.channelStatus[key] = {
-								subscribed: true, 
-								feedback: false, 
-								connection: "disconnected", 
-								receiver: action.options.receiver, 
-								channel: action.options.channel, 
-								d_name: label,
-								active: true,
-								actionId: [action.controlId]
-							}
-						}else {
-							self.parsedConfig.channelStatus[key]["active"] = true;
-							if (!self.parsedConfig.channelStatus[key]["actionId"].includes(action.controlId)) self.parsedConfig.channelStatus[key]["actionId"].push(action.controlId);
-							self.parsedConfig.channelStatus[key]["subscribed"]=true;
-						}
-					self.subscribeActionsUsed = true;
-					self.stringifyAndSave();
+					if(self.advancedFeedback[action.controlId] && !self.advancedFeedback[action.controlId][key]){
+						self.advancedFeedback[action.controlId][key]={d_name: label, channel: action.options.channel};
+					}
 				},
 				unsubscribe: async (action) => {
 					//Remove Dict Element after unsubscribing
 					let key = `${action.options.receiver}_${action.options.channel}`
-					self.parsedConfig.channelStatus[key]["actionId"]=self.parsedConfig.channelStatus[key]["actionId"].filter(id => id !== action.controlId);
-					self.log("warn", self.parsedConfig.channelStatus[key]["actionId"].length)
-					if (self.parsedConfig.channelStatus[key]["actionId"].length === 0){
-						delete self.parsedConfig.channelStatus[key]
+					if(self.advancedFeedback[action.controlId]){
+						delete self.advancedFeedback[action.controlId][key]
 					}
-					self.stringifyAndSave();
 				}
 		},
 		refresh_choices: {
@@ -161,70 +153,35 @@ module.exports = function (self) {
 			callback: async (action) => {
 				let success = await connectPreset(self, action.options.preset, action.options.mode, action.options.force)
 				let key = action.options.preset
-				if(!self.parsedConfig.channelStatus[key])
-				{
-					self.parsedConfig.channelStatus[key] = {subscribed: false, cleanup: false, feedback: false}
+				if (self.cachedPresets) {
+					delete self.cachedPresets.time;
+					delete self.cachedPresets.presetInfo;
 				}
-				if (!('subscribed' in self.parsedConfig.channelStatus[key])){
-					self.parsedConfig.channelStatus[key]["subscribed"] = false;
+				if(self.advancedFeedback[action.controlId]){
+					self.advancedFeedback[action.controlId][key]={preset: self.options.preset};
 				}
-
-				if(!self.parsedConfig.channelStatus[key])
-				{
-					self.parsedConfig.channelStatus[key][action.options.preset]= {
-						connection: success ? "connected" : "error", 
-						preset: action.options.preset, 
-						active: true, 
-						actionId: [action.controlId],
-					};
+				if (!success){
+					self.errorTracker.add(key);
 				}else{
-					self.parsedConfig.channelStatus[key]["connection"] = success ? "connected" : "error"
-					self.parsedConfig.channelStatus[key]["cleanup"]=true;
-					self.parsedConfig.channelStatus[key]["active"]=true;
-					if (!self.parsedConfig.channelStatus[key]["actionId"].includes(action.controlId)) self.parsedConfig.channelStatus[key]["actionId"].push(action.controlId);
+					self.errorTracker.delete(key);
 				}
 				self.checkFeedbacks(...self.feedbackList);
-				if (!self.parsedConfig.channelStatus[key]["subscribed"]){
-					Object.entries(self.parsedConfig.channelStatus)
-						.filter(([_, conn]) => conn.actionId.includes(action.controlId))
-						.forEach(([key, _]) => {
-							self.scheduleCleanup(key);
-						});
-				}
-				self.stringifyAndSave()
+				
 			},
 			subscribe: async (action) => {
 
 				//Create dict element when subscribing *Need to allow for multiple actions per button here.
-			const selectedReceiver = self.parsedConfig.receiverChoices.find(r => r.id === action.options.receiver);
-					let key = `${action.options.preset}`
-					if (!self.parsedConfig.channelStatus[key])
-						{
-							self.parsedConfig.channelStatus[key] = {
-								subscribed: true, 
-								feedback: false, 
-								connection: "disconnected",
-								preset: action.options.preset,
-								active: true,
-								actionId: [action.controlId]
-							}
-						}else {
-							self.parsedConfig.channelStatus[key]["active"] = true;
-							if (!self.parsedConfig.channelStatus[key]["actionId"].includes(action.controlId)) self.parsedConfig.channelStatus[key]["actionId"].push(action.controlId);
-							self.parsedConfig.channelStatus[key]["subscribed"]=true;
-						}
-					self.subscribeActionsUsed = true;
-					self.stringifyAndSave();
+					//const selectedReceiver = self.parsedConfig.receiverChoices.find(r => r.id === action.options.receiver);
+					let key = action.options.preset
+				if(self.advancedFeedback[action.controlId]){
+					self.advancedFeedback[action.controlId][key]={"preset": action.options.preset};
+				}
 			},
 			unsubscribe: async (action) => {
 
-				//Remove Dict Element after unsubscribing
-				let key = `${action.options.preset}`
-				self.parsedConfig.channelStatus[key]["actionId"]=self.parsedConfig.channelStatus[key]["actionId"].filter(id => id !== action.controlId);
-				if (self.parsedConfig.channelStatus[key]["actionId"].length === 0){
-					delete self.parsedConfig.channelStatus[key]
-				}
-				self.stringifyAndSave();
+					if(self.advancedFeedback[action.controlId]){
+						delete self.advancedFeedback[action.controlId][action.options.preset];
+					}
 			}
 		},
 		disconnect_preset: {

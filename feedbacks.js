@@ -1,4 +1,5 @@
 const { combineRgb } = require('@companion-module/base')
+const { getStatus } = require('./api')
 
 module.exports = async function (self) {
 	self.setFeedbackDefinitions({
@@ -49,25 +50,30 @@ module.exports = async function (self) {
 						default: 0xffffff // White
 					},
 				],
-				callback: (feedback) => {
+				callback: async (feedback) => {
+					
+					if (!self.advancedFeedback[feedback.controlId]){
+						self.advancedFeedback[feedback.controlId]={};
+					}
+					self.subscribeActions();
+					let status = []
+					 for (const [key, val] of Object.entries(self.advancedFeedback[feedback.controlId])){
+						var stat = null;
+						if(val.preset){
+							stat = await getStatus(self, null, null, val.preset)
+							status.push(stat);
+						}else{
+							stat = await getStatus(self, val.d_name, val.channel);
+							status.push(stat);
+						}
+					 }
 
 				//Get all connections that have the correct control ID
-				let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
-
-				//Set feedback status
-				connections.forEach(conn => {
-					conn.feedback = true;
-				});
-			
-
-					if (Object.keys(connections).length === 0) {
-						return {};
-					}
-
-					let allError = connections.every(conn => conn.connection === "error");
-					let allConnected = connections.every(conn => conn.connection === "connected");
-					let allDisconnected = connections.every(conn => conn.connection === "disconnected");
-					let allPartial = connections.every(conn => conn.connection === "partial");
+				
+					let allError = status.every(conn => conn === self.CONN.ERROR);
+					let allConnected = status.every(conn => conn === self.CONN.CONNECTED || conn == self.CONN.FULL);
+					let allDisconnected = status.every(conn => conn === self.CONN.DISCONNECTED);
+					let allPartial = status.every(conn => conn === self.CONN.PARTIAL);
 
 					if (allConnected) {
 
@@ -93,25 +99,14 @@ module.exports = async function (self) {
 					return {}; // Default button styling
 				},
 				subscribe: async (feedback) => {
-
-					//Get all connections for the button and set true
-					let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
-					connections.forEach(conn => {
-						conn.feedback = true;
-					});
-
-					self.stringifyAndSave();
+					if (!self.advancedFeedback[feedback.controlId]){
+						self.advancedFeedback[feedback.controlId]={};
+					}
+					self.subscribeActions();
 				},
 				
 				unsubscribe: async (feedback) => {
-
-					//Set feedback flag on connections
-					let connections = Object.values(self.parsedConfig.channelStatus).filter(conn => conn.actionId.includes(feedback.controlId));
-					connections.forEach(conn => {
-						conn.feedback = false;
-					});
-
-					self.stringifyAndSave()
+					delete self.advancedFeedback[feedback.controlId];
 				}
 			},
 		channel_status_boolean: {
@@ -137,9 +132,9 @@ module.exports = async function (self) {
 					type: 'dropdown',
 					label: 'Connection State',
 					choices: [
-						{id: "connected", label: "Connected"}, 
-						{id: "disconnected", label: "Disconnected"},
-						{id: "error", label: "Error"}
+						{id: self.CONN.CONNECTED, label: "Connected"}, 
+						{id: self.CONN.DISCONNECTED, label: "Disconnected"},
+						{id: self.CONN.ERROR, label: "Error"}
 					],
 					default: "connected"
 				},
@@ -147,36 +142,16 @@ module.exports = async function (self) {
 			learn: async (action) => {
 				await refreshLists(self, 3);
 			},
-			callback: (feedback) => {
-
-				//Ensure key exists in status
-				let key = `${feedback.options.receiver}_${feedback.options.channel}`
-				let connectionStatus = self.parsedConfig.channelStatus?.[key] || {};
-				if (!connectionStatus) {
-					return {};
-				}
-
-				//Set feedback and check against connection state
-				connectionStatus.feedback=true;
-				if (connectionStatus.connection === feedback.options.connectionState) {
+			callback: async (feedback) => {
+				const selectedReceiver = self.parsedConfig.receiverChoices.find(r => r.id === feedback.options.receiver);
+				const label = selectedReceiver ? selectedReceiver.label : "Unknown";
+				let status = await getStatus(self, label, feedback.options.channel);
+				if (status === feedback.options.connectionState) {
 					return true
 				} else{
 					return false
 				}
-				},
-				subscribe: async (feedback) => {
-					let key = `${feedback.options.receiver}_${feedback.options.channel}`
-					if (!self.parsedConfig.channelStatus[key]) return;
-					self.parsedConfig.channelStatus[key].feedback = true;
-					self.stringifyAndSave()
-				},
-				
-				unsubscribe: async (feedback) => {
-					let key = `${feedback.options.receiver}_${feedback.options.channel}`
-					if (!self.parsedConfig.channelStatus[key]) return;
-					self.parsedConfig.channelStatus[key].feedback = false;
-					self.stringifyAndSave()
-				}
+			},
 		},
 		preset_status_boolean: {
 			name: 'Preset Connection Status',
@@ -205,32 +180,14 @@ module.exports = async function (self) {
 			learn: async (action) => {
 				await refreshLists(self, 3);
 			},
-			callback: (feedback) => {
-				let key = `${feedback.options.preset}`
-				let connectionStatus = self.parsedConfig.channelStatus?.[key] || {};
-				if (!connectionStatus) {
-					return {};
-				}
-				connectionStatus.feedback=true;
-				if (connectionStatus.connection === feedback.options.connectionState) {
+			callback: async (feedback) => {
+				let status = await getStatus(self, null, null, feedback.options.preset);
+				if (status === feedback.options.connectionState) {
 					return true
 				} else{
 					return false
 				}
-				},
-				subscribe: async (feedback) => {
-					let key = `${feedback.options.preset}`
-					if (!self.parsedConfig.channelStatus[key]) return;
-					self.parsedConfig.channelStatus[key].feedback = true;
-					self.stringifyAndSave()
-				},
-				
-				unsubscribe: async (feedback) => {
-					let key = `${feedback.options.preset}`
-					if (!self.parsedConfig.channelStatus[key]) return;
-					self.parsedConfig.channelStatus[key].feedback = false;
-					self.stringifyAndSave()
-				}
+			},
 		},
 	
 	});
