@@ -24,7 +24,6 @@ class ModuleInstance extends InstanceBase {
 			PARTIAL: 'partial',
 			FULL: 'full',
 		});
-
 		//cleanup any leftover cache 
 		this.startCleanupTimers();
 
@@ -39,9 +38,8 @@ class ModuleInstance extends InstanceBase {
 		}else{
 			this.cachedTimeout = 5000;
 		}
-
 		//Initialize dicts and remove depricated dicts
-		if (this.config.users){
+		if (!this.config.users){
 			this.config.users = JSON.stringify({});;
 		}
 
@@ -64,7 +62,6 @@ class ModuleInstance extends InstanceBase {
 		this.log("debug", "Starting AIM module");
 		this.currentStatus=InstanceStatus.Connecting;
 		this.updateStatus(InstanceStatus.Connecting, 'Waiting for auth');
-
 		//Get a Token if none exists
 		let auth = false;
 		if (this.config.token){
@@ -169,7 +166,6 @@ class ModuleInstance extends InstanceBase {
 	}
 
 	async authenticate(username, password) {
-
 		//If the IP and Username are set, try authentication
 		if (this.config.ip && username) {
 			this.log("info", "Authenticating with the AIM server.");
@@ -178,7 +174,6 @@ class ModuleInstance extends InstanceBase {
 
 				//Await Token
 				var token = await getAuthToken(this, username, password);
-
 				//Check if token was received.
 				if (token) {
 					if (this.currentStatus != InstanceStatus.Ok){
