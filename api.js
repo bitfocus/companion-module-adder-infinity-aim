@@ -152,49 +152,53 @@ async function getToken(self, user, password){
     return token;
 }
 
-async function connectChannel(self, rec, channel, mode, user, password = "", force = false, retry=2)
-{
-    var token = await getToken(self, user, password);
-    let url = `http://${self.config.ip}/api/?v=5&method=connect_channel&token=${encodeURIComponent(token)}&c_id=${encodeURIComponent(channel)}&rx_id=${encodeURIComponent(rec)}&mode=${encodeURIComponent(mode)}`
-    
-    try
-    {
-        let response = await fetch(url, {
+async function connectChannel(self, rec, channel, mode, user, password = "", force = false, retry = 2) {
+    const token = await getToken(self, user, password);
+    const url = `http://${self.config.ip}/api/?v=5&method=connect_channel&token=${encodeURIComponent(token)}&c_id=${encodeURIComponent(channel)}&rx_id=${encodeURIComponent(rec)}&mode=${encodeURIComponent(mode)}`;
+
+    try {
+        const response = await fetch(url, {
             method: 'GET',
-            headers: {'Content-Type': 'applictaion/xml' },
+            headers: { 'Content-Type': 'application/xml' },
         });
 
-        let xmlText = await response.text();
-                const parser = new XMLParser();
-                let data = parser.parse(xmlText);
+        const xmlText = await response.text();
+        const parser = new XMLParser();
+        const data = parser.parse(xmlText);
 
-        if (data.api_response)
-            if(!data.api_response.success)
-        {   
-            if(data.api_response.errors.error.code === 10 && retry > 0){
+        if (data.api_response) {
+            if (data.api_response.success) {
+                return true;
+            }
+
+            const error = data.api_response.errors?.error;
+            const code = parseInt(error?.code);
+            const msg = error?.msg;
+
+            if (code === 10 && retry > 0) {
+                self.log('warn', `Token expired or permission denied. Retrying auth for ${user}...`);
                 await self.authenticate(user, password);
-                await connectChannel(self, rec, channel, mode, user, password, force, retry-1)
-                return;
+                return await connectChannel(self, rec, channel, mode, user, password, force, retry - 1);
             }
-            self.log('error', `Connection failed with code: ${data.api_response.errors.error.code} - ${data.api_response.errors.error.msg}`)
-        if (force){
-            let result = await disconnect(self, "channel", rec, 1);
-            if (!result){
-                return false;
+
+            self.log('error', `Connection failed with code: ${code} - ${msg}`);
+
+            if (force && retry > 0) {
+                const result = await disconnect(self, "channel", rec, 1);
+                if (!result) return false;
+                return await connectChannel(self, rec, channel, mode, user, password, force, retry - 1);
             }
-            return await connectChannel(self, rec, channel, mode, user, password, force, retry-1)
-        }
+            return false;
+        } else {
+            self.log('error', 'No API Response');
             return false;
         }
-        else{
-            return true;
-        }
-    }
-    catch (error)
-    {
+    } catch (error) {
         self.log('error', `Failed to change channel: ${error.message}`);
+        return false;
     }
 }
+
 
 /*
     Polls the AIM server and gets current status of connections. Updates Feedback.
@@ -332,12 +336,12 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 			}
 
 			if (device.con_end_time) {
-				return self.errorTracker.has(key) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
+				return self.errorTracker.has(`${rxName}_${chID}`) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
 			} else {
 				return self.CONN.CONNECTED;
 			}
 		} else {
-			return self.errorTracker.has(key) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
+			return self.errorTracker.has(`${rxName}_${chID}`) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
 		}
 	} catch (error) {
 		delete self.receiverRequests[key];

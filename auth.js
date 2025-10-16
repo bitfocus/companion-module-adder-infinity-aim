@@ -9,7 +9,7 @@ async function getAuthToken(instance, username, pass = "") {
         password = instance.config.password;
     }else{
         instance.parsedConfig.users[username] = {"password": pass, "token": "", lastUsed: Date.now()}
-        instance.stringifyAndSave();
+
         user = username;
         password = pass;
     }
@@ -32,7 +32,6 @@ async function getAuthToken(instance, username, pass = "") {
             instance.log("warning", 'Authentication failed: No token received.');
             if (instance.parsedConfig.users[username]){
                 delete instance.parsedConfig.users[username];
-                instance.stringifyAndSave();
             }
             return null;
         }
@@ -40,7 +39,6 @@ async function getAuthToken(instance, username, pass = "") {
         instance.log("error", `Error in authentication: ${error.message}`);
         if (instance.parsedConfig.users[username]){
             delete instance.parsedConfig.users[username];
-            instance.stringifyAndSave();
         }
         return null;
     }

@@ -43,7 +43,7 @@ class ModuleInstance extends InstanceBase {
 			this.config.users = JSON.stringify({});;
 		}
 
-		if (this.config.channelStatus){
+		if (typeof this.config.channelStatus !== 'undefined' && this.config.channelStatus){
 			delete this.config.channelStatus;
 		}
 
@@ -85,7 +85,7 @@ class ModuleInstance extends InstanceBase {
 	// When module gets deleted
 	async destroy() {
 		this.log('debug', 'destroy')
-	}
+		}
 
 	startCleanupTimers(){
 		this.receiverTimer = setInterval(() => this.cleanupStaleReceivers(),  60 * 60 * 1000);
@@ -134,7 +134,7 @@ class ModuleInstance extends InstanceBase {
 		this.config.receiverChoices = JSON.stringify(this.parsedConfig.receiverChoices);
 		this.config.channelChoices = JSON.stringify(this.parsedConfig.channelChoices);
 		this.config.presets = JSON.stringify(this.parsedConfig.presets);
-		this.config.users = JSON.stringify(this.parsedConfig.users)
+		this.config.users = JSON.stringify(this.parsedConfig.users);
 		this.saveConfig(this.config);
 	}
 

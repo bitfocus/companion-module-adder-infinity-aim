@@ -65,7 +65,7 @@ module.exports = function (self) {
 				let success = null;
 				//Try connecting the channel
 				if(action.options.userCheckbox){
-					let success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, action.options.username, action.options.password, action.options.force);
+					success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, action.options.username, action.options.password, action.options.force);
 				}else{
 					success = await connectChannel(self,action.options.receiver, action.options.channel, action.options.mode, self.config.username, self.config.password, action.options.force);
 				}
@@ -80,19 +80,21 @@ module.exports = function (self) {
 
 				const cacheKey = label;
 				if (self.cachedReceivers && self.cachedReceivers[cacheKey]) {
-					delete self.cachedReceivers[cacheKey]; // Force next call to be fresh
+					delete self.cachedReceivers[cacheKey];
+					await new Promise(resolve => setTimeout(resolve, 300))
 				}
+				if (success){
+					self.errorTracker.delete(key);
+				}
+				else{
+					self.errorTracker.delete(key);
+				}
+				
 
 
 				if(self.advancedFeedback[action.controlId]){
 					self.advancedFeedback[action.controlId][key]={d_name: label, channel: action.options.channel};
 				}
-				if (!success){
-					self.errorTracker.add(key);
-				}else{
-					self.errorTracker.delete(key);
-				}
-				
 
 				//Update feedbacks
 				self.checkFeedbacks(...self.feedbackList);
