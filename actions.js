@@ -44,17 +44,13 @@ module.exports = function (self) {
 					id: 'username',
 					type: 'textinput',
 					label: 'Connection User',
-					isVisible: (options) => {
-						return options.userCheckbox === true
-					},
+					isVisibleExpression: '$(options:userCheckbox) === true'
 				},
 				{
 					id: 'password',
 					type: 'textinput',
 					label: 'Connection Password',
-					isVisible: (options) => {
-						return options.userCheckbox === true
-					},
+					isVisibleExpression: '$(options:userCheckbox) === true'
 				},
 			],
 			learn: async (action) => {
@@ -159,17 +155,13 @@ module.exports = function (self) {
 					id: 'username',
 					type: 'textinput',
 					label: 'Connection User',
-					isVisible: (options) => {
-						return options.userCheckbox === true
-					},
+					isVisibleExpression: '$(options:userCheckbox) === true'
 				},
 				{
 					id: 'password',
 					type: 'textinput',
 					label: 'Connection Password',
-					isVisible: (options) => {
-						return options.userCheckbox === true
-					},
+					isVisibleExpression: '$(options:userCheckbox) === true'
 				},
 			],
 			learn: async (action) => {

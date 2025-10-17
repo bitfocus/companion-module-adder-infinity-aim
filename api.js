@@ -203,14 +203,13 @@ async function connectChannel(self, rec, channel, mode, user, password = "", for
 /*
     Polls the AIM server and gets current status of connections. Updates Feedback.
 */
-
-
 async function getStatus(self, rxName = null, chID = null, presetID = null, retry = 2) {
 	let now = Date.now();
     let presetInfo = null;
 
+    //Check if preset feedback
     if (presetID) {
-        const presetKey = 'all_presets'; // Or use presetID if fetching individual ones
+        const presetKey = 'all_presets'; 
         self.presetRequests = self.presetRequests || {};
         self.cachedPresets = self.cachedPresets || {};
 
@@ -226,7 +225,7 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
             presetInfo = Object.values(presets).find(entry => String(entry.cp_id) === String(presetID));
         } else {
             const presetPromise = (async () => {
-                const presets = await getPresets(self, 2, true); // your existing method
+                const presets = await getPresets(self, 2, true);
                 return presets;
             })();
 
@@ -277,7 +276,7 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 		else if (key in self.receiverRequests) {
 			data = await self.receiverRequests[key];
 		}
-		// No valid cache or in-flight — fetch
+		// No valid cache or in-progress — fetch
 		else {
 			self.receiverRequests[key] = (async () => {
 				const url = `http://${self.config.ip}/api/?v=2&method=get_devices&&device_type=rx&filter_d_name=${encodeURIComponent(rxName)}&token=${encodeURIComponent(self.config.token)}`;
@@ -285,16 +284,25 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 					method: 'GET',
 					headers: { 'Content-Type': 'application/xml' },
 				});
-
+                
+                //Get response
 				const xmlText = await response.text();
-				const parser = new XMLParser();
-				const parsed = parser.parse(xmlText);
+                
+                //Handle 429
+                if(response.status == 429){
+                    throw new Error(429);
+                }
 
+				const parser = new XMLParser();
+				var parsed = parser.parse(xmlText);
+
+                //If a response was received and API was not successful, check error code
 				if (parsed.api_response && !parsed.api_response.success) {
 					const error = Array.isArray(parsed.api_response.errors)
 						? parsed.api_response.errors[0]?.error
 						: parsed.api_response.errors?.error;
 
+                    //If 10, Log in failed, attempt login and retry
 					if (error?.code === 10) {
 						await self.authenticate(self.config.username, self.config.password);
 						if (retry > 0) {
@@ -302,12 +310,13 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 							return await getStatus(self, rxName, chID, presetID, retry - 1);
 						}
 						throw new Error("Auth failure after retries");
-					} else {
+					}else {
 						self.log("error", "Could not find device");
 						throw new Error("Device fetch failed");
 					}
 				}
-
+                
+                //Add data to cache
 				self.cachedReceivers[key] = {
 					data: parsed,
 					time: Date.now(),
@@ -318,7 +327,7 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 			data = await self.receiverRequests[key];
 		}
 
-		// Clean up in-flight tracker
+		// Clean up in progress tracking
 		delete self.receiverRequests[key];
 
 		if (data.api_response.count_devices === 0) {
@@ -350,6 +359,10 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 			self.log("error", `${error.message} ${JSON.stringify(data)}`);
 			self.log("error", `Connection failed with code: ${data.api_response?.errors?.error?.code} - ${data.api_response?.errors?.error?.msg}`);
 		} else {
+            if(error.message==429){
+                self.log("error", "Too many requests to AIM, waiting for next poll");
+                return self.CONN.CONNECTED
+            }
 			self.log("error", `${error.message} No response from AIM. Please check your configuration.`);
 			self.updateStatus(InstanceStatus.ConnectionFailure);
 		}
