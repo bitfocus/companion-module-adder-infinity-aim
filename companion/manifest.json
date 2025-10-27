@@ -3,7 +3,7 @@
 	"name": "Adder Infinity AIM",
 	"shortname": "AIM",
 	"description": "Adder Infinity AIM API module for Companion",
-	"version": "2.1.2",
+	"version": "2.1.4",
 	"license": "MIT",
 	"repository": "git+https://github.com/bitfocus/companion-module-adder-infinity-aim.git",
 	"bugs": "https://github.com/bitfocus/companion-module-adder-infinity-aim/issues",
