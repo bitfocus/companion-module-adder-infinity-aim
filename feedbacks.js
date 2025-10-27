@@ -1,5 +1,5 @@
 const { combineRgb } = require('@companion-module/base')
-const { getStatus } = require('./api')
+const { getStatus, refreshLists } = require('./api')
 
 module.exports = async function (self) {
 	self.setFeedbackDefinitions({

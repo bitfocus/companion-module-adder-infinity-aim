@@ -7,26 +7,39 @@ const { InstanceStatus } = require('@companion-module/base')
     Refreshes all lists from AIM
 */
 async function refreshLists(self, retry = 2, rtnData = false){
-    await refreshAvailableChannels(self, retry);
-    await refreshAvailableReceivers(self, retry);
-    let presets = await getPresets(self, retry, rtnData);
-    self.stringifyAndSave();
-    self.updateActions();
-    self.updateFeedbacks();
-    if (rtnData) return presets;
+    let presets = [];
+    try{
+        await refreshAvailableChannels(self, retry);
+    }catch (error){
+        self.log("error", error.message);
+    }
+    try{
+        await refreshAvailableReceivers(self, retry);
+    }catch (error){
+        self.log("error", error.message);
+    }
+    try{
+        presets = await refreshAvailablePresets(self, retry, rtnData);
+    }catch (error){
+        self.log("error", error.message);
+    }
+        self.stringifyAndSave();
+        self.updateActions();
+        self.updateFeedbacks();
+        if (rtnData) return presets;
 }
 
-/*
-    Refresh Channel List from AIM server.
-*/
-async function refreshAvailableChannels(self, retry = 0){
-    try{
-        let url = `http://${self.config.ip}/api/?v=2&method=get_channels&token=${encodeURIComponent(self.config.token)}`;
+async function getChannels(self, retry =0, page=1){
+        try{
+        let url = `http://${self.config.ip}/api/?v=14&method=get_channels&token=${encodeURIComponent(self.config.token)}&page=${page}`;
                 let response = await fetch(url, {
                     method: 'GET', // No need for POST since data is in the URL
                     headers: { 'Content-Type': 'application/xml' }, // Your API might return XML
                 });
                 
+                if(response.status===429){
+                    throw new Error('Server Rejected with Status 429 - Too many requests');
+                }
                 //Parse Response
                 let xmlText = await response.text();
                 const parser = new XMLParser();
@@ -38,94 +51,161 @@ async function refreshAvailableChannels(self, retry = 0){
                         if (retry>0){
                             self.log("info", "calling authentication")
                             await self.authenticate(self.config.username, self.config.password)
-                            await refreshAvailableChannels(self, retry-1)
-                            return
+                            return await getChannels(self, retry-1, page)
+                            
                         }
                         else{
                             self.log("error", "Could not authenticate")
-                            return
+                            throw new Error("Authentication failed after retries")
                         }
                     }
 
 
-                //If success, replace channel list
+                //If success, get channels and return list
                 if (data.api_response && data.api_response.channels) {
-                    self.log("debug",'Channels Fetched successful.');
-                    if (this.currentStatus !== InstanceStatus.Ok){
-                        this.currentStatus = InstanceStatus.Ok;
+                    if (self.currentStatus !== InstanceStatus.Ok){
+                        self.currentStatus = InstanceStatus.Ok;
                         self.updateStatus(InstanceStatus.Ok);
                     }
-                    let channels = Array.isArray(data.api_response.channels.channel)
-                    ? data.api_response.channels.channel
-                    : [data.api_response.channels.channel];
-                    let channel_options = [{id: "None", label: "None"}]
+                    let channels = [];
+                    if (data.api_response.channels.channel){
+                        channels = Array.isArray(data.api_response.channels.channel)
+                            ? data.api_response.channels.channel
+                            : [data.api_response.channels.channel];
 
-                    channels.forEach(channel => {
-                        channel_options.push({id: channel.c_id, label: channel.c_name})
-                        
-                    });
-                    self.parsedConfig.channelChoices = channel_options
-
-                } else {
-                    self.log("warning", 'Authentication failed: No token received.');
-                    return null;
+                    }
+                    let return_data = {
+                        total_channels: parseInt(data.api_response.total_channels, 10), 
+                        count_channels: parseInt(data.api_response.count_channels, 10), 
+                        current_page: parseInt(data.api_response.page, 10),
+                        results_per_page: parseInt(data.api_response.results_per_page, 10),
+                        channels: channels
+                    }
+                    return return_data;
                 }
+            }catch (error){
+                self.log("error", `getChannels failed: ${error.message}`);
+                throw error;
+            }
+
+}
+
+/*
+    Refresh Channel List from AIM server.
+*/
+async function refreshAvailableChannels(self, retry = 0){
+    try{
+        let data = await getChannels(self, retry);
+        let channels = data.channels;
+
+        if(data.count_channels < data.total_channels){
+            let current_page = data.current_page;
+            let total_pages = Math.ceil(data.total_channels/data.results_per_page);
+            for (let i = current_page + 1; i <= total_pages; i++){
+                let tempData = await getChannels(self, retry, i);
+                channels.push(...tempData.channels);
+            }
+        }
+        let channel_options=[{id: "None", label: "None"}];
+        channels.forEach(channel => {
+            channel_options.push({id: channel.c_id, label: channel.c_name})
+        });
+        self.parsedConfig.channelChoices = channel_options
     }
     catch (error){
         self.log("error", error.message)
     }
 }
 
-async function refreshAvailableReceivers(self, retry=0){
+async function getReceivers(self, retry=0, page=1){
     try{
-        self.log("info", "Refresh Receivers")
-        let url = `http://${self.config.ip}/api/?v=2&method=get_devices&device_type=rx&token=${encodeURIComponent(self.config.token)}`;
-                let response = await fetch(url, {
-                    method: 'GET',
-                    headers: { 'Content-Type': 'application/xml' }, 
-                });
-        
-                let xmlText = await response.text();
-                const parser = new XMLParser();
-                let data = parser.parse(xmlText);
-                
-                if (data.api_response && !data.api_response.success)
-                {
-                    if (retry>0){
-                        await self.authenticate(self.config.username, self.config.password)
-                        refreshAvailableReceivers(self, retry-1)
-                        return
-                    }
-                    else{
-                        self.log("error", "Could not authenticate")
-                        return
-                    }
-                }
-                if (data.api_response.devices) {
-                    self.log("info",'Receivers Fetched successful.');
-                    if (this.currentStatus !== InstanceStatus.Ok){
-                        this.currentStatus = InstanceStatus.Ok;
-                        self.updateStatus(InstanceStatus.Ok);
-                    }
-                    let devices = Array.isArray(data.api_response.devices.device)
-                    ? data.api_response.devices.device
-                    : [data.api_response.devices.device];
-                    let device_options = [{id: "None", label: "None"}]
-                    
-                    devices.forEach(device => {
-                        device_options.push({id: device.d_id, label: device.d_name})
-                        
+            //self.log("info", "Refresh Receivers")
+            let url = `http://${self.config.ip}/api/?v=14&method=get_devices&device_type=rx&token=${encodeURIComponent(self.config.token)}&page=${page}`;
+                    let response = await fetch(url, {
+                        method: 'GET',
+                        headers: { 'Content-Type': 'application/xml' }, 
                     });
-                    self.parsedConfig.receiverChoices = device_options
-                    self.stringifyAndSave();
 
-                } else {
+                    if(response.status===429){
+                        throw new Error('429');
+                    }
+            
+                    let xmlText = await response.text();
+                    const parser = new XMLParser();
+                    let data = parser.parse(xmlText);
+                    
+                    if (data.api_response && !data.api_response.success)
+                    {
+                        if (retry>0){
+                            await self.authenticate(self.config.username, self.config.password)
+                            return await getReceivers(self, retry-1, page)
+                        }
+                        else{
+                            self.log("error", "Could not authenticate")
+                            throw new Error("Authentication failed after retries")
+                        }
+                    }
+                    let devices = [];
+                    if (data.api_response.devices) {
+                        if (data.api_response.devices.device) { 
+                            devices = Array.isArray(data.api_response.devices.device)
+                                ? data.api_response.devices.device
+                                : [data.api_response.devices.device];
+                        }
+
+                        let return_data = {
+                           total_devices: parseInt(data.api_response.total_devices, 10), 
+                            count_devices: parseInt(data.api_response.count_devices, 10), 
+                            current_page: parseInt(data.api_response.page, 10),
+                            results_per_page: parseInt(data.api_response.results_per_page, 10),
+                            devices: devices}
+                        return return_data;
+                    }else {
                     self.log("Error", 'Unable to fetch receivers');
-                    return null;
+                    throw new Error("Unable to fetch receivers: No 'devices' field in API response");
                 }
-    }
-    catch (error){
-        self.log("error", error.message)
+            }catch (error){
+                throw error;
+            }
+}
+
+async function refreshAvailableReceivers(self, retry=0){
+    self.refreshingCacheInProgress=true;
+    try{
+
+        let data = await getReceivers(self, retry);
+        let devices = data.devices;
+        //self.log("info",'Receivers Fetched successful.');
+        if (self.currentStatus !== InstanceStatus.Ok){
+            self.currentStatus = InstanceStatus.Ok;
+            self.updateStatus(InstanceStatus.Ok);
+        }
+        if (data.count_devices < data.total_devices){
+            let current_page = data.current_page;
+            let total_pages = Math.ceil(data.total_devices/data.results_per_page);
+            for (let i = current_page + 1; i <= total_pages; i++){
+                let tempData = await getReceivers(self, retry, i);
+                devices.push(...tempData.devices);
+            }
+        }
+        let device_options = [{id: "None", label: "None"}]
+
+        
+        devices.forEach(device => {
+            device_options.push({id: device.d_id, label: device.d_name})
+            self.cachedReceivers[device.d_name]={id: device.d_id, con_c_id: device.con_c_id, con_end_time: device.con_end_time, status: device.d_status}
+            
+        });
+        self.receiverCacheLastRefreshed = Date.now();
+        self.parsedConfig.receiverChoices = device_options
+        self.stringifyAndSave();
+
+    }catch (error){
+        self.log("error", `Refresh Receivers failed ${error.message}`);
+        throw error;
+    }finally{
+        self.refreshingCacheInProgress=false;
+        
     }
 }
 
@@ -203,45 +283,39 @@ async function connectChannel(self, rec, channel, mode, user, password = "", for
 /*
     Polls the AIM server and gets current status of connections. Updates Feedback.
 */
+
 async function getStatus(self, rxName = null, chID = null, presetID = null, retry = 2) {
-	let now = Date.now();
+    let now = Date.now();
     let presetInfo = null;
 
     //Check if preset feedback
     if (presetID) {
-        const presetKey = 'all_presets'; 
-        self.presetRequests = self.presetRequests || {};
         self.cachedPresets = self.cachedPresets || {};
 
-        if (
-            self.cachedPresets.time &&
-            now - self.cachedPresets.time < self.cachedTimeout &&
-            self.cachedPresets.presetInfo &&
-            String(self.cachedPresets.presetInfo.cp_id) === String(presetID)
-        ) {
-            presetInfo = self.cachedPresets.presetInfo;
-        } else if (self.presetRequests[presetKey]) {
-            const presets = await self.presetRequests[presetKey];
-            presetInfo = Object.values(presets).find(entry => String(entry.cp_id) === String(presetID));
-        } else {
-            const presetPromise = (async () => {
-                const presets = await getPresets(self, 2, true);
-                return presets;
-            })();
+        const isPresetCacheValid = self.presetCacheLastRefreshed && (now -self.presetCacheLastRefreshed < self.cachedTimeout);
 
-            self.presetRequests[presetKey] = presetPromise;
-
-            try {
-                const presets = await presetPromise;
-                presetInfo = Object.values(presets).find(entry => String(entry.cp_id) === String(presetID));
-                self.cachedPresets = {
-                    presetInfo,
-                    time: Date.now(),
-                };
-            } finally {
-                delete self.presetRequests[presetKey]; // Cleanup
+        try {
+            if (!isPresetCacheValid){
+                if (!self.presetRefreshPromise){
+                    self.presetRefreshPromise = (async () => {
+                        try{
+                            const presets = await refreshAvailablePresets(self, 2);
+                            } finally {
+                                self.presetRefreshPromise=null;
+                            }
+                    })();
+                }
+                await self.presetRefreshPromise;
+            }
+        } catch (error) {
+            if (String(error.message).includes('429')) {
+                self.log("warn", "429 Too Many Requests on Presets. Using stale data.");
+            } else {
+                self.log("error", `Preset check failed during refresh: ${error.message}`);
+                return self.CONN.ERROR; // Real error
             }
         }
+        presetInfo = self.cachedPresets[presetID]
 
         // Process preset status if found
         if (presetInfo) {
@@ -263,88 +337,45 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 
 	// ----- Receiver Status Cache Logic -----
 	const key = rxName;
-	if (!self.receiverRequests) self.receiverRequests = {};
-
-	let data = null;
+    if (key === "None") {return self.CONN.DISCONNECTED}
+	if (!self.cachedReceivers) self.cachedReceivers = {};
 
 	try {
-		// Use cache if fresh
-		if (key in self.cachedReceivers && now - self.cachedReceivers[key].time < self.cachedTimeout) {
-			data = self.cachedReceivers[key].data;
-		}
-		// Await in-progress request if present
-		else if (key in self.receiverRequests) {
-			data = await self.receiverRequests[key];
-		}
-		// No valid cache or in-progress — fetch
-		else {
-			self.receiverRequests[key] = (async () => {
-				const url = `http://${self.config.ip}/api/?v=2&method=get_devices&&device_type=rx&filter_d_name=${encodeURIComponent(rxName)}&token=${encodeURIComponent(self.config.token)}`;
-				const response = await fetch(url, {
-					method: 'GET',
-					headers: { 'Content-Type': 'application/xml' },
-				});
-                
-                //Get response
-				const xmlText = await response.text();
-                
-                //Handle 429
-                if(response.status == 429){
-                    throw new Error(429);
+
+        const isCacheValid = self.receiverCacheLastRefreshed && (now - self.receiverCacheLastRefreshed < self.cachedTimeout);
+        //Get Fresh Cache
+        try{
+            if (!isCacheValid){
+                if(!self.refreshPromise){
+                    self.refreshPromise = (async () => {
+                        try {
+                            await refreshAvailableReceivers(self);
+                        } finally {
+                            self.refreshPromise = null;
+                        }
+                    })();
                 }
+                await self.refreshPromise;
+            }
+        } catch (error){
+            if (String(error.message) === '429') {
+                        self.log("warn", "429 Too Many Requests. Using stale data until next poll.");
+                    } else {
+                        self.log("error", `Status check failed during refresh: ${error.message}`);
+                        return self.CONN.ERROR;
+                    }
+        }
+		const device = self.cachedReceivers[key];
 
-				const parser = new XMLParser();
-				var parsed = parser.parse(xmlText);
-
-                //If a response was received and API was not successful, check error code
-				if (parsed.api_response && !parsed.api_response.success) {
-					const error = Array.isArray(parsed.api_response.errors)
-						? parsed.api_response.errors[0]?.error
-						: parsed.api_response.errors?.error;
-
-                    //If 10, Log in failed, attempt login and retry
-					if (error?.code === 10) {
-						await self.authenticate(self.config.username, self.config.password);
-						if (retry > 0) {
-							delete self.receiverRequests[key]; // clear before retry
-							return await getStatus(self, rxName, chID, presetID, retry - 1);
-						}
-						throw new Error("Auth failure after retries");
-					}else {
-						self.log("error", "Could not find device");
-						throw new Error("Device fetch failed");
-					}
-				}
-                
-                //Add data to cache
-				self.cachedReceivers[key] = {
-					data: parsed,
-					time: Date.now(),
-				};
-				return parsed;
-			})();
-
-			data = await self.receiverRequests[key];
-		}
-
-		// Clean up in progress tracking
-		delete self.receiverRequests[key];
-
-		if (data.api_response.count_devices === 0) {
-			self.log("warn", "No receivers found, please check your configuration.");
-			return self.CONN.DISCONNECTED;
-		}
-
-		const device = data.api_response.devices.device;
+        if (!device){
+            self.log("warn", `Receiver "${key}" not found in cache. Please check configuration.`);
+            return self.CONN.ERROR;
+        }
 
 		// Connected to expected channel?
 		if (String(device.con_c_id) === String(chID)) {
-			if (self.currentStatus !== InstanceStatus.Ok) {
-				self.currentStatus = InstanceStatus.Ok;
-				self.updateStatus(InstanceStatus.Ok);
-			}
 
-			if (device.con_end_time) {
+			if (device.con_end_time || device.status==0) {
 				return self.errorTracker.has(`${rxName}_${chID}`) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
 			} else {
 				return self.CONN.CONNECTED;
@@ -353,34 +384,23 @@ async function getStatus(self, rxName = null, chID = null, presetID = null, retr
 			return self.errorTracker.has(`${rxName}_${chID}`) ? self.CONN.ERROR : self.CONN.DISCONNECTED;
 		}
 	} catch (error) {
-		delete self.receiverRequests[key];
-
-		if (data != null) {
-			self.log("error", `${error.message} ${JSON.stringify(data)}`);
-			self.log("error", `Connection failed with code: ${data.api_response?.errors?.error?.code} - ${data.api_response?.errors?.error?.msg}`);
-		} else {
-            if(error.message==429){
-                self.log("error", "Too many requests to AIM, waiting for next poll");
-                return self.CONN.CONNECTED
-            }
-			self.log("error", `${error.message} No response from AIM. Please check your configuration.`);
-			self.updateStatus(InstanceStatus.ConnectionFailure);
-		}
-
+	    self.log("error", `Error Parsing Receiver Feedback for RX - \"${key}\": ${error.message}`);
 		return self.CONN.ERROR;
 	}
 }
 
-
-async function getPresets(self, retry=0, rtnData = false)
-{
-    let url = `http://${self.config.ip}/api/?v=1&method=get_presets&token=${encodeURIComponent(self.config.token)}`
+async function getPresets(self, retry=0, page=1){
+    let url = `http://${self.config.ip}/api/?v=14&method=get_presets&token=${encodeURIComponent(self.config.token)}&page=${page}`
     let data = null;
     try{
         let response = await fetch(url, {
             method: 'GET',
             headers: { 'Content-Type': 'application/xml' }, 
         });
+
+        if (response.status===429){
+            throw new Error('Server Rejected with Status 429 - Too many requests');
+        }
 
         let xmlText = await response.text();
         const parser = new XMLParser();
@@ -393,40 +413,65 @@ async function getPresets(self, retry=0, rtnData = false)
             : data.api_response.errors?.error;
         if (error?.code === 10 && retry > 0) {
             await self.authenticate(self.config.username, self.config.password)
-            await getPresets(self, retry - 1); // Ensure we await the function
-            return;
+            return await getPresets(self, retry - 1, page); // Ensure we await the function
             }
             else{
                 self.log("error", "Could not fetch presets")
-                return
+                throw new Error("Authentication failed after retries.")
             }
         }
 
-        if(data.api_response.count_presets>0){
-            let presets = Array.isArray(data.api_response.connection_presets.connection_preset)
+        let presets = [];
+        if(data.api_response.connection_presets && data.api_response.connection_presets.connection_preset){
+            presets = Array.isArray(data.api_response.connection_presets.connection_preset)
                 ? data.api_response.connection_presets.connection_preset
                 : [data.api_response.connection_presets.connection_preset];
-                let preset_options = [{id: "None", label: "None"}]
-            presets.forEach( p => {
-                preset_options.push({id: p.cp_id, label: p.cp_name});
-            })
-
-            self.parsedConfig.presets = preset_options
-            if (rtnData){
-                return presets;
-            }
-        }else{
-            self.log("info", "There were no presets defined on the AIM server.")
         }
-
+        let return_data = {
+            total_presets: parseInt(data.api_response.total_presets, 10), 
+            count_presets: parseInt(data.api_response.count_presets, 10), 
+            current_page: parseInt(data.api_response.page, 10),
+            results_per_page: parseInt(data.api_response.results_per_page, 10),
+            presets: presets}
+            return return_data;
     }catch (error){
         if(data){
             self.log('error', `Connection failed with code: ${JSON.stringify(data)} with js ${error.message}`)
-            return false;
+
         }else {
             self.log("error", error.message)
-            return false;
         }
+        throw error;
+    }
+
+}
+
+async function refreshAvailablePresets(self, retry=0, rtnData = false)
+{
+    try{
+        let data = await getPresets(self, retry)
+        let presets = data.presets;
+        if (data.count_presets < data.total_presets){
+            let total_pages = Math.ceil(data.total_presets/data.results_per_page);
+            for (let i = data.current_page + 1; i <= total_pages; i++){
+                let tempData = await getPresets(self, retry, i);
+                presets.push(...tempData.presets);
+            }
+        }
+        let preset_options = [{id: "None", label: "None"}]
+        self.cachedPresets={}
+        presets.forEach( p => {
+            preset_options.push({id: p.cp_id, label: p.cp_name});
+            self.cachedPresets[p.cp_id] = p;
+        });
+        self.presetCacheLastRefreshed = Date.now();
+        self.parsedConfig.presets = preset_options
+        if (rtnData){
+            return presets;
+        }
+
+    }catch (error){
+        throw error;
     }
 }
 
@@ -500,4 +545,4 @@ async function disconnect(self, type, id, force = 0){
 
 
 
-module.exports = { refreshAvailableChannels, connectChannel, getPresets, connectPreset, disconnect, refreshLists, getStatus }
+module.exports = { refreshAvailableChannels, connectChannel, refreshAvailablePresets, connectPreset, disconnect, refreshLists, getStatus }

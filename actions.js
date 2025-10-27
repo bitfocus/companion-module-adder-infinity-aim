@@ -1,4 +1,4 @@
-const { refreshAvailableChannels, refreshLists, connectChannel, getPresets, connectPreset, disconnect } = require('./api');
+const { refreshLists, connectChannel, refreshAvailablePresets, connectPreset, disconnect } = require('./api');
 module.exports = function (self) {
 	self.setActionDefinitions({
 		Connect_Channel: {
@@ -74,20 +74,14 @@ module.exports = function (self) {
 				const label = selectedReceiver ? selectedReceiver.label : "Unknown";
 				let key = `${label}_${action.options.channel}`
 
-				const cacheKey = label;
-				if (self.cachedReceivers && self.cachedReceivers[cacheKey]) {
-					delete self.cachedReceivers[cacheKey];
-					await new Promise(resolve => setTimeout(resolve, 300))
-				}
-				if (success){
-					self.errorTracker.delete(key);
+				self.receiverCacheLastRefreshed = null;
+				await new Promise(resolve => setTimeout(resolve, 300))
+				if (!success){
+					self.errorTracker.add(key);
 				}
 				else{
 					self.errorTracker.delete(key);
 				}
-				
-
-
 				if(self.advancedFeedback[action.controlId]){
 					self.advancedFeedback[action.controlId][key]={d_name: label, channel: action.options.channel};
 				}
@@ -176,10 +170,8 @@ module.exports = function (self) {
 				}
 
 				let key = action.options.preset
-				if (self.cachedPresets) {
-					delete self.cachedPresets.time;
-					delete self.cachedPresets.presetInfo;
-				}
+				self.presetCacheLastRefreshed = null;
+				await new Promise(resolve => setTimeout(resolve, 300))
 				if(self.advancedFeedback[action.controlId]){
 					self.advancedFeedback[action.controlId][key]={preset: self.options.preset};
 				}
@@ -229,6 +221,12 @@ module.exports = function (self) {
 			},
 			callback: async (action) => {
 				let success = await disconnect(self, "preset", action.options.preset, action.options.force)
+				self.presetCacheLastRefreshed = null;
+				await new Promise(resolve => setTimeout(resolve, 300));
+
+				//Update feedbacks
+				self.checkFeedbacks(...self.feedbackList);
+			
 			}
 		},
 		disconnect_channel: {
@@ -255,6 +253,13 @@ module.exports = function (self) {
 			callback: async (action) => {
 				let force = action.options.force ? 1 : 0;
 				let success = await disconnect(self, "channel", action.options.receiver, force)
+
+
+				self.receiverCacheLastRefreshed = null;
+				await new Promise(resolve => setTimeout(resolve, 300))
+
+				//Update feedbacks
+				self.checkFeedbacks(...self.feedbackList);
 			}
 		},
 	})

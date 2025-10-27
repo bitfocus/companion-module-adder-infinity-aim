@@ -4,7 +4,7 @@ const UpdateActions = require('./actions')
 const UpdateFeedbacks = require('./feedbacks')
 const UpdateVariableDefinitions = require('./variables')
 const { getAuthToken } = require('./auth');
-const { refreshLists, checkConnectionStatus } = require('./api');
+const { refreshLists } = require('./api');
 class ModuleInstance extends InstanceBase {
 	constructor(internal) {
 		super(internal)
@@ -33,6 +33,8 @@ class ModuleInstance extends InstanceBase {
 		this.receiverRequests = {};
 		this.presetRequests = {};
 		this.cachedTimeout = null;
+		this.refreshingCacheInProgress = false;
+		this.receiverCacheLastRefreshed = null;
 		if (this.config.pollInterval <= 5000 ){
 			this.cachedTimeout = this.config.pollInterval - 500;
 		}else{
@@ -50,6 +52,7 @@ class ModuleInstance extends InstanceBase {
 		if(!this.config.receiverChoices){
 			this.config.receiverChoices = JSON.stringify([{id: "None", label: "None"}]);
 		}
+		
 		if(!this.config.channelChoices){
 			this.config.channelChoices = JSON.stringify([{id: "None", label: "None"}]);
 		}
