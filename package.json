@@ -13,7 +13,7 @@
 	},
 	"dependencies": {
 		"@companion-module/base": "~1.12.1",
-		"fast-xml-parser": "^5.3.4",
+		"fast-xml-parser": "^5.3.6",
 		"node-fetch-commonjs": "^3.3.2"
 	},
 	"devDependencies": {
